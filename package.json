@@ -1,0 +1,43 @@
+{
+  "name": "ranch_ledger",
+  "version": "1.0.0",
+  "main": "ntos.",
+  "description": "O Ranch Ledger é um sistema baseado em blockchain projetado para rastrear e registrar informações detalhadas sobre o gado bovino. Combinando a transparência e a segurança da tecnologia blockchain, o Ranch Ledger oferece uma solução confiável para rastrear a origem, os cuidados, os processos e a proveniência do gado desde o nascimento até a mesa do consumidor. Permite que produtores, frigoríficos, revendedores e consumidores acessem e verifiquem os dados em tempo real, incluindo identificação única, histórico de vacinação, movimentações entre fazendas, monitoramento de alimentação, exames de saúde, abate e logística. Utiliza smart contracts para garantir integridade e imutabilidade dos dados, protegendo contra fraudes e oferecendo privacidade. Visa proporcionar transparência e facilitar a tomada de decisões informadas na escolha de produtos de origem animal. É uma solução confiável e inovadora para a rastreabilidade e certificação de origem bovina, beneficiando produtores e consumidores em busca de produtos de qualidade e práticas sustentáveis na cadeia de suprimentos.",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "clean-folders": "rm -dfr scripts/* && rm -dfr build/*",
+    "rebuild": "npm run clean-folders && truffle compile --all",
+    "migrate": "npx env-cmd -f .env.local npm run clean-folders && truffle migrate -f 1 --to 1",
+    "ganache": "rm -rf .ganachedb && npx ganache -m 'MNEMONIC KEY' --db './.ganachedb' -a 100"
+  },
+  "keywords": [
+    "rastreabilidade",
+    "certificação",
+    "origem",
+    "blockchain",
+    "gado",
+    "transparência",
+    "privacidade",
+    "proveniência",
+    "segurança",
+    "smart contracts",
+    "cadeia de suprimentos"
+  ],
+  "author": "Enrique Souza",
+  "license": "MIT",
+  "dependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "express": "^4.18.2",
+    "mongoose": "^8.0.3",
+    "web3": "^1.7.5"
+  },
+  "devDependencies": {
+    "@truffle/hdwallet-provider": "^2.0.14",
+    "@types/web3": "^1.2.2",
+    "concurrently": "7.3.0",
+    "env-cmd": "10.1.0",
+    "ganache": "^7.4.0",
+    "hardhat": "^2.19.4",
+    "truffle-plugin-verify": "^0.5.27"
+  }
+}
