@@ -1,0 +1,64 @@
+type Bovine @entity {
+  id: ID! # bovineId as string
+  name: String!
+  age: BigInt!
+  breed: String!
+  location: String!
+  owner: Bytes!
+  vaccines: [Vaccine!]! @derivedFrom(field: "bovine")
+  movements: [Movement!]! @derivedFrom(field: "bovine")
+  feeds: [Feed!]! @derivedFrom(field: "bovine")
+  healthExams: [HealthExam!]! @derivedFrom(field: "bovine")
+  abattoirProcesses: [AbattoirProcess!]! @derivedFrom(field: "bovine")
+  nftTokenId: BigInt # Associated NFT token ID if minted
+}
+
+type Vaccine @entity {
+  id: ID! # bovineId-vaccineIndex
+  bovine: Bovine!
+  name: String!
+  date: BigInt!
+}
+
+type Movement @entity {
+  id: ID! # bovineId-movementIndex
+  bovine: Bovine!
+  fromLocation: String!
+  toLocation: String!
+  date: BigInt!
+}
+
+type Feed @entity {
+  id: ID! # bovineId-feedIndex
+  bovine: Bovine!
+  foodType: String!
+  origin: String!
+  quantity: BigInt!
+  date: BigInt!
+}
+
+type HealthExam @entity {
+  id: ID! # bovineId-examIndex
+  bovine: Bovine!
+  examType: String!
+  result: String!
+  date: BigInt!
+}
+
+type AbattoirProcess @entity {
+  id: ID! # bovineId-processIndex
+  bovine: Bovine!
+  abattoir: String!
+  abattoirDate: BigInt!
+  processing: String!
+  date: BigInt!
+}
+
+type NFTTransfer @entity {
+  id: ID! # transactionHash-logIndex
+  from: Bytes!
+  to: Bytes!
+  tokenId: BigInt!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+}

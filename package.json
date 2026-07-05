@@ -1,43 +1,47 @@
 {
   "name": "ranch_ledger",
-  "version": "1.0.0",
-  "main": "ntos.",
-  "description": "O Ranch Ledger é um sistema baseado em blockchain projetado para rastrear e registrar informações detalhadas sobre o gado bovino. Combinando a transparência e a segurança da tecnologia blockchain, o Ranch Ledger oferece uma solução confiável para rastrear a origem, os cuidados, os processos e a proveniência do gado desde o nascimento até a mesa do consumidor. Permite que produtores, frigoríficos, revendedores e consumidores acessem e verifiquem os dados em tempo real, incluindo identificação única, histórico de vacinação, movimentações entre fazendas, monitoramento de alimentação, exames de saúde, abate e logística. Utiliza smart contracts para garantir integridade e imutabilidade dos dados, protegendo contra fraudes e oferecendo privacidade. Visa proporcionar transparência e facilitar a tomada de decisões informadas na escolha de produtos de origem animal. É uma solução confiável e inovadora para a rastreabilidade e certificação de origem bovina, beneficiando produtores e consumidores em busca de produtos de qualidade e práticas sustentáveis na cadeia de suprimentos.",
+  "version": "2.0.0",
+  "description": "On-chain cattle lifecycle ledger built on Solidity 0.8.28, Foundry + OpenZeppelin v5.1. Off-chain Express + ethers v6 service bridges the on-chain BovineTracking contract with MongoDB.",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "clean-folders": "rm -dfr scripts/* && rm -dfr build/*",
-    "rebuild": "npm run clean-folders && truffle compile --all",
-    "migrate": "npx env-cmd -f .env.local npm run clean-folders && truffle migrate -f 1 --to 1",
-    "ganache": "rm -rf .ganachedb && npx ganache -m 'MNEMONIC KEY' --db './.ganachedb' -a 100"
+    "build": "forge build",
+    "test": "forge test -vv",
+    "test:gas": "forge test --gas-report",
+    "anvil": "anvil --accounts 100 --balance 1000 --block-time 1",
+    "deploy": "forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast",
+    "bulk-mint": "forge script script/BulkMint.s.sol --rpc-url http://127.0.0.1:8545 --broadcast",
+    "dev": "concurrently -k -n anvil,server -c green,blue \"npm:anvil\" \"node server.js\"",
+    "simulate:100": "bash scripts/simulate_100.sh",
+    "deploy:amoy": "forge script script/Deploy.s.sol --rpc-url $AMOY_RPC_URL --broadcast --private-key $PRIVATE_KEY_AMOY -vvvv",
+    "fmt": "forge fmt",
+    "fmt:check": "forge fmt --check",
+    "clean": "forge clean && rm -rf out cache broadcast deployments"
   },
   "keywords": [
     "rastreabilidade",
-    "certificação",
+    "certificacao",
     "origem",
     "blockchain",
     "gado",
-    "transparência",
+    "transparencia",
     "privacidade",
-    "proveniência",
-    "segurança",
+    "proveniencia",
+    "seguranca",
     "smart contracts",
-    "cadeia de suprimentos"
+    "foundry",
+    "openzeppelin",
+    "ethers",
+    "supply-chain"
   ],
   "author": "Enrique Souza",
   "license": "MIT",
   "dependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
-    "express": "^4.18.2",
-    "mongoose": "^8.0.3",
-    "web3": "^1.7.5"
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.4",
+    "express": "^4.19.2",
+    "mongoose": "^8.5.1"
   },
   "devDependencies": {
-    "@truffle/hdwallet-provider": "^2.0.14",
-    "@types/web3": "^1.2.2",
-    "concurrently": "7.3.0",
-    "env-cmd": "10.1.0",
-    "ganache": "^7.4.0",
-    "hardhat": "^2.19.4",
-    "truffle-plugin-verify": "^0.5.27"
+    "concurrently": "^8.2.2"
   }
 }

@@ -1,0 +1,174 @@
+{
+  "common": {
+    "appName": "Ranch Ledger",
+    "version": "2.0.0",
+    "language": "Português (Brasil)",
+    "loading": "Carregando...",
+    "error": "Erro",
+    "success": "Sucesso",
+    "cancel": "Cancelar",
+    "confirm": "Confirmar",
+    "save": "Salvar",
+    "delete": "Excluir",
+    "edit": "Editar",
+    "search": "Pesquisar",
+    "filter": "Filtrar",
+    "export": "Exportar",
+    "import": "Importar"
+  },
+
+  "navigation": {
+    "dashboard": "Painel",
+    "bovines": "Bovinos",
+    "nfts": "NFTs",
+    "tokens": "Tokens",
+    "reports": "Relatórios",
+    "settings": "Configurações"
+  },
+
+  "bovine": {
+    "title": "Registro Bovino",
+    "id": "ID",
+    "name": "Nome",
+    "age": "Idade",
+    "breed": "Raça",
+    "location": "Localização",
+    "owner": "Proprietário",
+    "vaccines": "Vacinas",
+    "movements": "Movimentações",
+    "feeds": "Alimentação",
+    "healthExams": "Exames de Saúde",
+    "abattoirProcesses": "Processos de Abate",
+    "addBovine": "Registrar Bovino",
+    "editBovine": "Editar Bovino",
+    "deleteBovine": "Excluir Bovino",
+    "confirmDelete": "Tem certeza que deseja excluir este bovino?",
+    "breeds": {
+      "Holstein": "Holandês",
+      "Angus": "Angus",
+      "Hereford": "Hereford",
+      "Jersey": "Jersey",
+      "Brahman": "Nelore"
+    },
+    "locations": {
+      "Farm A": "Fazenda A",
+      "Farm B": "Fazenda B",
+      "Farm C": "Fazenda C",
+      "Farm D": "Fazenda D",
+      "Farm E": "Fazenda E"
+    }
+  },
+
+  "vaccine": {
+    "name": "Nome da Vacina",
+    "date": "Data de Aplicação",
+    "addVaccine": "Adicionar Vacina",
+    "vaccineType": {
+      "FMD": "Febre Aftosa",
+      "BR": "Brucelose",
+      "BQ": "Botulismo",
+      "IBR": "RBTV",
+      "BVD": "Diarréia Viral Bovina"
+    }
+  },
+
+  "movement": {
+    "fromLocation": "Local de Origem",
+    "toLocation": "Local de Destino",
+    "date": "Data da Movimentação",
+    "addMovement": "Registrar Movimentação",
+    "gpsCoordinates": "Coordenadas GPS"
+  },
+
+  "feed": {
+    "foodType": "Tipo de Alimentação",
+    "origin": "Origem",
+    "quantity": "Quantidade (kg)",
+    "date": "Data de Alimentação",
+    "addFeed": "Registrar Alimentação",
+    "types": {
+      "Corn": "Milho",
+      "Soybean": "Soja",
+      "Hay": "Feno",
+      "Silage": "Silagem",
+      "Mineral": "Mineral"
+    }
+  },
+
+  "healthExam": {
+    "examType": "Tipo de Exame",
+    "result": "Resultado",
+    "date": "Data do Exame",
+    "addHealthExam": "Registrar Exame",
+    "results": {
+      "Healthy": "Sadio",
+      "Sick": "Doente",
+      "Recovered": "Recuperado",
+      "UnderTreatment": "Em Tratamento"
+    }
+  },
+
+  "abattoir": {
+    "abattoir": "Frigorífico",
+    "abattoirDate": "Data do Abate",
+    "processing": "Processo",
+    "date": "Data de Registro",
+    "addAbattoirProcess": "Registrar Processo de Abate"
+  },
+
+  "nft": {
+    "title": "BovineNFT",
+    "tokenId": "ID do Token",
+    "bovineId": "ID do Bovino Vinculado",
+    "owner": "Proprietário Atual",
+    "mintedAt": "Data de Cunhagem",
+    "batchMint": "Cunhar em Lote"
+  },
+
+  "token": {
+    "title": "Ranch Token (RANCH)",
+    "balance": "Saldo",
+    "totalSupply": "Fornecimento Total",
+    "mint": "Cunhar",
+    "burn": "Queimar",
+    "transfer": "Transferir"
+  },
+
+  "roles": {
+    "admin": "Administrador",
+    "registrar": "Registrador",
+    "vet": "Veterinário",
+    "rancher": "Produtor Rural",
+    "abattoir": "Frigorífico"
+  },
+
+  "dashboard": {
+    "totalBovines": "Total de Bovinos",
+    "byBreed": "Por Raça",
+    "byLocation": "Por Localização",
+    "recentActivity": "Atividade Recente",
+    "healthStatus": "Status de Saúde",
+    "vaccineCompliance": "Conformidade de Vacinação"
+  },
+
+  "errors": {
+    "invalidBovine": "Bovino inválido",
+    "duplicateName": "Nome duplicado",
+    "emptyString": "Campo vazio",
+    "invalidAge": "Idade inválida (1-40 anos)",
+    "noNFTReceiver": "Receptor NFT não configurado",
+    "insufficientRole": "Permissão insuficiente",
+    "reentrancyDetected": "Tentativa de reentrância detectada"
+  },
+
+  "messages": {
+    "bovineAdded": "Bovino registrado com sucesso",
+    "vaccineAdded": "Vacina adicionada",
+    "movementAdded": "Movimentação registrada",
+    "feedAdded": "Alimentação registrada",
+    "healthExamAdded": "Exame de saúde registrado",
+    "abattoirProcessAdded": "Processo de abate registrado",
+    "nftMinted": "NFT cunhado com sucesso",
+    "tokenMinted": "Tokens cunhados"
+  }
+}

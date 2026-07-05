@@ -1,0 +1,174 @@
+{
+  "common": {
+    "appName": "Ranch Ledger",
+    "version": "2.0.0",
+    "language": "English",
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "search": "Search",
+    "filter": "Filter",
+    "export": "Export",
+    "import": "Import"
+  },
+
+  "navigation": {
+    "dashboard": "Dashboard",
+    "bovines": "Bovines",
+    "nfts": "NFTs",
+    "tokens": "Tokens",
+    "reports": "Reports",
+    "settings": "Settings"
+  },
+
+  "bovine": {
+    "title": "Bovine Record",
+    "id": "ID",
+    "name": "Name",
+    "age": "Age",
+    "breed": "Breed",
+    "location": "Location",
+    "owner": "Owner",
+    "vaccines": "Vaccines",
+    "movements": "Movements",
+    "feeds": "Feeds",
+    "healthExams": "Health Exams",
+    "abattoirProcesses": "Abattoir Processes",
+    "addBovine": "Add Bovine",
+    "editBovine": "Edit Bovine",
+    "deleteBovine": "Delete Bovine",
+    "confirmDelete": "Are you sure you want to delete this bovine?",
+    "breeds": {
+      "Holstein": "Holstein",
+      "Angus": "Angus",
+      "Hereford": "Hereford",
+      "Jersey": "Jersey",
+      "Brahman": "Brahman"
+    },
+    "locations": {
+      "Farm A": "Farm A",
+      "Farm B": "Farm B",
+      "Farm C": "Farm C",
+      "Farm D": "Farm D",
+      "Farm E": "Farm E"
+    }
+  },
+
+  "vaccine": {
+    "name": "Vaccine Name",
+    "date": "Application Date",
+    "addVaccine": "Add Vaccine",
+    "vaccineType": {
+      "FMD": "Foot and Mouth Disease",
+      "BR": "Brucellosis",
+      "BQ": "Botulism",
+      "IBR": "IBR/RBTV",
+      "BVD": "Bovine Viral Diarrhea"
+    }
+  },
+
+  "movement": {
+    "fromLocation": "Origin Location",
+    "toLocation": "Destination Location",
+    "date": "Movement Date",
+    "addMovement": "Record Movement",
+    "gpsCoordinates": "GPS Coordinates"
+  },
+
+  "feed": {
+    "foodType": "Feed Type",
+    "origin": "Origin",
+    "quantity": "Quantity (kg)",
+    "date": "Feeding Date",
+    "addFeed": "Record Feed",
+    "types": {
+      "Corn": "Corn",
+      "Soybean": "Soybean",
+      "Hay": "Hay",
+      "Silage": "Silage",
+      "Mineral": "Mineral"
+    }
+  },
+
+  "healthExam": {
+    "examType": "Exam Type",
+    "result": "Result",
+    "date": "Exam Date",
+    "addHealthExam": "Record Health Exam",
+    "results": {
+      "Healthy": "Healthy",
+      "Sick": "Sick",
+      "Recovered": "Recovered",
+      "UnderTreatment": "Under Treatment"
+    }
+  },
+
+  "abattoir": {
+    "abattoir": "Abattoir",
+    "abattoirDate": "Slaughter Date",
+    "processing": "Processing Method",
+    "date": "Record Date",
+    "addAbattoirProcess": "Record Abattoir Process"
+  },
+
+  "nft": {
+    "title": "BovineNFT",
+    "tokenId": "Token ID",
+    "bovineId": "Linked Bovine ID",
+    "owner": "Current Owner",
+    "mintedAt": "Mint Date",
+    "batchMint": "Batch Mint"
+  },
+
+  "token": {
+    "title": "Ranch Token (RANCH)",
+    "balance": "Balance",
+    "totalSupply": "Total Supply",
+    "mint": "Mint",
+    "burn": "Burn",
+    "transfer": "Transfer"
+  },
+
+  "roles": {
+    "admin": "Administrator",
+    "registrar": "Registrar",
+    "vet": "Veterinarian",
+    "rancher": "Rancher",
+    "abattoir": "Abattoir Operator"
+  },
+
+  "dashboard": {
+    "totalBovines": "Total Bovines",
+    "byBreed": "By Breed",
+    "byLocation": "By Location",
+    "recentActivity": "Recent Activity",
+    "healthStatus": "Health Status",
+    "vaccineCompliance": "Vaccine Compliance"
+  },
+
+  "errors": {
+    "invalidBovine": "Invalid bovine",
+    "duplicateName": "Duplicate name",
+    "emptyString": "Empty field",
+    "invalidAge": "Invalid age (1-40 years)",
+    "noNFTReceiver": "NFT receiver not configured",
+    "insufficientRole": "Insufficient role permission",
+    "reentrancyDetected": "Reentrancy attempt detected"
+  },
+
+  "messages": {
+    "bovineAdded": "Bovine registered successfully",
+    "vaccineAdded": "Vaccine added",
+    "movementAdded": "Movement recorded",
+    "feedAdded": "Feed recorded",
+    "healthExamAdded": "Health exam recorded",
+    "abattoirProcessAdded": "Abattoir process recorded",
+    "nftMinted": "NFT minted successfully",
+    "tokenMinted": "Tokens minted"
+  }
+}

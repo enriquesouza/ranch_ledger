@@ -1,50 +1,80 @@
+'use strict';
+
 const express = require('express');
 const mongoose = require('mongoose');
 const Bovine = require('./models/bovine');
+const bovineService = require('./services/bovineService');
 
-mongoose.connect('mongodb://localhost/bovine-tracker', { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => {
-    console.log('Connected to MongoDB');
-  })
-  .catch((err) => {
-    console.error('Error connecting to MongoDB:', err);
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/bovine-tracker';
+const PORT = Number(process.env.PORT || 3000);
+
+async function main() {
+  await mongoose.connect(MONGODB_URI);
+  console.log('Connected to MongoDB');
+
+  const { BovineTracking: address } = bovineService.readDeployment();
+  console.log(`BovineTracking contract: ${address}`);
+
+  const app = express();
+  app.use(express.json());
+
+  app.post('/bovines', async (req, res) => {
+    const data = req.body;
+    try {
+      const doc = new Bovine(data);
+      await doc.save();
+
+      try {
+        const id = await bovineService.addBovine(data);
+        doc.chainId = id;
+        await doc.save();
+        res.status(201).json({ success: true, id, message: 'Bovine created and anchored on-chain' });
+      } catch (chainErr) {
+        console.error('Blockchain persist failed, rolling back Mongo', chainErr);
+        await Bovine.deleteOne({ _id: doc._id });
+        res.status(502).json({ success: false, message: 'Blockchain persist failed', error: String(chainErr) });
+      }
+    } catch (err) {
+      console.error('Error creating bovine:', err);
+      res.status(500).json({ success: false, message: 'Failed to create bovine' });
+    }
   });
 
-const app = express();
-app.use(express.json());
+  app.post('/bovines/:id/vaccine', async (req, res) => {
+    try {
+      const { name, date } = req.body;
+      await bovineService.addVaccine(req.params.id, name, date);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ success: false, error: String(err) });
+    }
+  });
 
-app.post('/bovines', async (req, res) => {
-  const bovineData = req.body;
+  app.post('/bovines/:id/movement', async (req, res) => {
+    try {
+      const { fromLocation, toLocation, date } = req.body;
+      await bovineService.addMovement(req.params.id, fromLocation, toLocation, date);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ success: false, error: String(err) });
+    }
+  });
 
-  try {
-    // Step 1: Persist in MongoDB
-    const bovine = new Bovine(bovineData);
-    await bovine.save();
+  app.get('/bovines/:id', async (req, res) => {
+    try {
+      const b = await bovineService.getBovine(req.params.id);
+      res.json({ success: true, bovine: b });
+    } catch (err) {
+      res.status(500).json({ success: false, error: String(err) });
+    }
+  });
 
-    // Step 2: Call method to persist on the blockchain
-    await persistOnBlockchain(bovineData);
+  app.get('/health', (_req, res) => res.json({ ok: true, contract: address }));
 
-    res.status(201).json({ success: true, message: 'Bovine created successfully' });
-  } catch (error) {
-    console.error('Error creating bovine:', error);
-    res.status(500).json({ success: false, message: 'Failed to create bovine' });
-  }
-});
-
-async function persistOnBlockchain(bovineData) {
-  try {
-    // Method to persist the bovine on the blockchain
-    // Replace with your own implementation
-    // Example of calling the BovineTracking smart contract:
-    // await bovineTrackingContract.methods.addBovine(...).send({ from: ... });
-    console.log(`Persisting bovine on the blockchain: ${bovineData.name}`);
-  } catch (error) {
-    console.error('Error persisting bovine on the blockchain:', error);
-    throw error; // Rollback changes if blockchain persistence fails
-  }
+  app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
 }
 
-const PORT = 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
 });
