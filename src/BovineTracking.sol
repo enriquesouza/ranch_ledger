@@ -127,6 +127,12 @@ contract BovineTracking is AccessControl, ReentrancyGuardTransient {
         string breed;
         string location;
         address owner;
+        
+        // Global livestock identification — supports all national systems
+        string countryCode;   // ISO 3166-1 alpha-2: BR, EU, US, AU, CN, SA, AE, QA
+        string nationalId;    // Country-specific ID (SISBOV, ANID, NLIS, etc.)
+        string earTag;        // Physical ear tag number
+        
         Vaccine[] vaccines;
         Movement[] movements;
         Feed[] feeds;

@@ -73,6 +73,8 @@ contract RanchLendingVault is AccessControl, ReentrancyGuardTransient {
     struct Collateral {
         address owner;         // Original depositor (cannot be transferred)
         uint256 tokenId;       // NFT token ID
+        string countryCode;    // ISO 3166-1 alpha-2: BR, EU, US, AU, CN, SA, AE, QA
+        string nationalId;     // Country-specific ID (SISBOV, ANID, NLIS, GCC, etc.)
         uint256 notionalValue; // Notional value in RanchToken (6 decimals)
         uint256 healthScore;   // 0-100, derived from provenance data
         bool isCollateralized; // Whether this NFT is currently collateral

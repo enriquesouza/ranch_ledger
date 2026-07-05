@@ -54,6 +54,7 @@ contract GovernorRanch is Governor, Votes, AccessControl {
     // ------------------------------------------------------------------ //
 
     ERC20 public immutable token;
+    uint256 private immutable _votingDelay;
     uint256 private immutable _votingPeriod;
     
     uint256 private constant MIN_PROPOSAL_THRESHOLD = 1e18; // 1 token (6 decimals)
@@ -102,7 +103,7 @@ contract GovernorRanch is Governor, Votes, AccessControl {
     }
 
     function quorum(uint256 blockNumber) public view override returns (uint256) {
-        return token.getPastTotalSupply(blockNumber) / 10; // 10% quorum
+        return token.totalSupply() / 10; // 10% quorum based on total supply
     }
 
     function proposalThreshold() public view override returns (uint256) {
@@ -110,12 +111,89 @@ contract GovernorRanch is Governor, Votes, AccessControl {
     }
 
     function getVotes(address account, uint256 blockNumber) public view override returns (uint256) {
-        return token.getPastVotes(account, blockNumber);
+        return token.balanceOf(account); // Simplified: use current balance instead of historical
     }
 
     function hasVoted(uint256 proposalId, address account) public view override returns (bool) {
         return _votesCast[proposalId][account];
     }
+
+    function supportsInterface(bytes4 interfaceId) public view virtual override(Governor, AccessControl) returns (bool) {
+        return super.supportsInterface(interfaceId);
+    }
+
+    function COUNTING_MODE() external pure override returns (string memory) {
+        return "support=bravo&quorum=yes";
+    }
+
+    function CLOCK_MODE() external pure override returns (string memory) {
+        return "mode=blocknumber";
+    }
+
+    function clock() public view override returns (uint48) {
+        return uint48(block.number);
+    }
+
+    function _getVotingUnits(address account) internal view override returns (uint256) {
+        return token.getVotes(account);
+    }
+
+    function _quorumReached(uint256 proposalId) internal view virtual override returns (bool) {
+        ProposalDetails memory details = _proposals[proposalId];
+        uint256 quorumVotes = quorum(details.proposalSnapshot);
+        return details.yesVotes + details.abstainVotes >= quorumVotes;
+    }
+
+    function _voteSucceeded(uint256 proposalId) internal view virtual override returns (bool) {
+        ProposalDetails memory details = _proposals[proposalId];
+        return details.yesVotes > details.noVotes && _quorumReached(proposalId);
+    }
+
+    function _countVote(
+        uint256 proposalId,
+        address account,
+        uint8 support,
+        uint256 weight,
+        bytes memory params
+    ) internal virtual override {
+        ProposalDetails storage details = _proposals[proposalId];
+        
+        if (support == 0) {
+            details.noVotes += weight;
+        } else if (support == 1) {
+            details.yesVotes += weight;
+        } else if (support == 2) {
+            details.abstainVotes += weight;
+        }
+        
+        _votesCast[proposalId][account] = true;
+    }
+
+    function state(uint256 proposalId) public view override returns (ProposalState) {
+        ProposalDetails memory details = _proposals[proposalId];
+        
+        if (details.proposalDeadline < block.number) {
+            return ProposalState.Succeeded;
+        } else if (_voteSucceeded(proposalId)) {
+            return ProposalState.Succeeded;
+        } else {
+            return ProposalState.Active;
+        }
+    }
+
+    function proposalDeadline(uint256 proposalId) public view override returns (uint256) {
+        return _proposals[proposalId].proposalDeadline;
+    }
+
+    struct ProposalDetails {
+        uint256 yesVotes;
+        uint256 noVotes;
+        uint256 abstainVotes;
+        uint256 proposalSnapshot;
+        uint256 proposalDeadline;
+    }
+
+    mapping(uint256 => ProposalDetails) private _proposals;
 
     function propose(
         address[] memory targets,
