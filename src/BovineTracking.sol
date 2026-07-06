@@ -84,6 +84,15 @@ contract BovineTracking is AccessControl, ReentrancyGuardTransient {
     event AbattoirProcessAdded(
         uint256 indexed bovineId, string abattoir, uint256 abattoirDate, string processing, uint256 date
     );
+    event MovementGPS(
+        uint256 indexed bovineId,
+        int256 fromLatE7,
+        int256 fromLongE7,
+        int256 toLatE7,
+        int256 toLongE7,
+        uint256 date
+    );
+    event EudrAttestations(uint256 indexed bovineId, string sisbovId, bytes32 certHash);
 
     // ------------------------------------------------------------------ //
     //                              Structs                               //
@@ -98,6 +107,16 @@ contract BovineTracking is AccessControl, ReentrancyGuardTransient {
         string fromLocation;
         string toLocation;
         uint64 date;  // Packed: saves ~19k gas per write vs uint256
+        int256 latE7; // Optional GPS latitude in E7 (degrees × 1e7); 0 = no GPS
+        int256 longE7; // Optional GPS longitude in E7 (degrees × 1e7); 0 = no GPS
+    }
+
+    /// @dev EUDR (EU Deforestation Regulation) compliance metadata.
+    struct EUDRData {
+        string sisbovId;            // SISBOV national identifier (Brazil)
+        string cnpj;               // Producer/establishment CNPJ
+        bytes32 deforestationCertHash; // Hash of deforestation-free certificate
+        bool isSet;                 // True once metadata has been attested
     }
 
     struct Feed {
@@ -132,6 +151,9 @@ contract BovineTracking is AccessControl, ReentrancyGuardTransient {
         string countryCode;   // ISO 3166-1 alpha-2: BR, EU, US, AU, CN, SA, AE, QA
         string nationalId;    // Country-specific ID (SISBOV, ANID, NLIS, etc.)
         string earTag;        // Physical ear tag number
+        
+        // EUDR compliance metadata (optional, set via addEudrMetadata)
+        EUDRData eudrData;
         
         Vaccine[] vaccines;
         Movement[] movements;
@@ -224,6 +246,42 @@ contract BovineTracking is AccessControl, ReentrancyGuardTransient {
         emit BovineAdded(id, name, age, breed, location, owner);
     }
 
+    /// @notice Register a new bovine with global/national identification fields.
+    /// @dev    Overload of addBovine for SISBOV / NLIS / ANID integration.
+    function addBovineWithId(
+        string calldata name,
+        uint256 age,
+        string calldata breed,
+        string calldata location,
+        address owner,
+        string calldata countryCode,
+        string calldata nationalId,
+        string calldata earTag
+    ) external onlyRole(REGISTRAR_ROLE) nonReentrant nonEmpty(name) nonEmpty(breed) {
+        if (_bovineIdByName[name] != 0) revert DuplicateBovineName(name);
+        if (age == 0 || age > 40) revert InvalidAge(age);
+
+        uint256 id = ++totalBovines;
+
+        _bovineIdByName[name] = id;
+        _bovineIds.add(id);
+        _bovineIdsByBreed[breed].add(id);
+        _bovineIdsByLocation[location].add(id);
+
+        Bovine storage b = _bovines[id];
+        b.id = uint64(id);
+        b.name = name;
+        b.age = uint64(age);
+        b.breed = breed;
+        b.location = location;
+        b.owner = owner;
+        b.countryCode = countryCode;
+        b.nationalId = nationalId;
+        b.earTag = earTag;
+
+        emit BovineAdded(id, name, age, breed, location, owner);
+    }
+
     function addVaccine(uint256 bovineId, string calldata name, uint256 date)
         external
         onlyRole(VET_ROLE)
@@ -240,9 +298,28 @@ contract BovineTracking is AccessControl, ReentrancyGuardTransient {
         string calldata toLocation,
         uint256 date
     ) external onlyRole(RANCHER_ROLE) exists(bovineId) nonEmpty(fromLocation) nonEmpty(toLocation) {
-        _bovines[bovineId].movements.push(Movement(fromLocation, toLocation, uint64(date)));
+        _bovines[bovineId].movements.push(Movement(fromLocation, toLocation, uint64(date), 0, 0));
         _bovines[bovineId].location = toLocation;
         emit MovementAdded(bovineId, fromLocation, toLocation, date);
+    }
+
+    /// @notice Record a movement with GPS coordinates (E7 format: degrees × 1e7).
+    /// @dev    0,0 coordinates mean "no GPS" — MovementGPS event is still emitted.
+    function addMovementWithGPS(
+        uint256 bovineId,
+        string calldata fromLocation,
+        string calldata toLocation,
+        uint256 date,
+        int256 fromLatE7,
+        int256 fromLongE7,
+        int256 toLatE7,
+        int256 toLongE7
+    ) external onlyRole(RANCHER_ROLE) exists(bovineId) nonEmpty(fromLocation) nonEmpty(toLocation) {
+        Bovine storage b = _bovines[bovineId];
+        b.movements.push(Movement(fromLocation, toLocation, uint64(date), toLatE7, toLongE7));
+        b.location = toLocation;
+        emit MovementAdded(bovineId, fromLocation, toLocation, date);
+        emit MovementGPS(bovineId, fromLatE7, fromLongE7, toLatE7, toLongE7, date);
     }
 
     function addFeed(
@@ -277,6 +354,22 @@ contract BovineTracking is AccessControl, ReentrancyGuardTransient {
             AbattoirProcess(abattoir, uint64(abattoirDate), processing, uint64(date))
         );
         emit AbattoirProcessAdded(bovineId, abattoir, abattoirDate, processing, date);
+    }
+
+    /// @notice Attach EUDR (EU Deforestation Regulation) compliance metadata to a bovine.
+    /// @dev    Restricted to REGISTRAR_ROLE. Can be called once per bovine (overwrites if re-attested).
+    function addEudrMetadata(
+        uint256 bovineId,
+        string calldata sisbovId,
+        string calldata cnpj,
+        bytes32 deforestationCertHash
+    ) external onlyRole(REGISTRAR_ROLE) exists(bovineId) nonEmpty(sisbovId) {
+        EUDRData storage d = _bovines[bovineId].eudrData;
+        d.sisbovId = sisbovId;
+        d.cnpj = cnpj;
+        d.deforestationCertHash = deforestationCertHash;
+        d.isSet = true;
+        emit EudrAttestations(bovineId, sisbovId, deforestationCertHash);
     }
 
     // ------------------------------------------------------------------ //
@@ -332,5 +425,10 @@ contract BovineTracking is AccessControl, ReentrancyGuardTransient {
         returns (AbattoirProcess[] memory)
     {
         return _bovines[id].abattoirProcesses;
+    }
+
+    /// @notice Returns the EUDR compliance metadata for a bovine.
+    function getEudrData(uint256 id) external view exists(id) returns (EUDRData memory) {
+        return _bovines[id].eudrData;
     }
 }

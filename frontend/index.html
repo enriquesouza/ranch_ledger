@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ranch_ledger — Rastreabilidade Bovina</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .gradient-bg { background: linear-gradient(135deg, #1a5d1a 0%, #2d8f2d 50%, #4caf50 100%); }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Header -->
+    <header class="gradient-bg text-white shadow-lg">
+        <div class="container mx-auto px-4 py-6 flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <span class="text-3xl">🐄</span>
+                <div>
+                    <h1 class="text-2xl font-bold" data-i18n="title">ranch_ledger</h1>
+                    <p class="text-sm opacity-90" data-i18n="subtitle">Rastreabilidade Bovina na Blockchain</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <button id="langToggle" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg font-medium transition">
+                    🇧🇷 PT-BR
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="container mx-auto px-4 py-8 max-w-4xl">
+        <!-- Search Section -->
+        <section class="bg-white rounded-xl shadow-md p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4" data-i18n="searchTitle">Buscar Animal</h2>
+            <div class="flex gap-3">
+                <input id="searchInput" type="text" placeholder="Nome ou ID do bovino" 
+                    class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    data-i18n-placeholder="searchPlaceholder">
+                <button id="searchBtn" class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-medium transition" data-i18n="searchBtn">Buscar</button>
+            </div>
+        </section>
+
+        <!-- Bovine Details -->
+        <section id="bovineDetails" class="hidden bg-white rounded-xl shadow-md p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4" data-i18n="detailsTitle">Detalhes do Animal</h2>
+            <div class="grid grid-cols-2 gap-4">
+                <div><span class="text-gray-500 text-sm" data-i18n="name">Nome</span>: <span id="bovineName" class="font-medium"></span></div>
+                <div><span class="text-gray-500 text-sm" data-i18n="breed">Raça</span>: <span id="bovineBreed" class="font-medium"></span></div>
+                <div><span class="text-gray-500 text-sm" data-i18n="age">Idade</span>: <span id="bovineAge" class="font-medium"></span></div>
+                <div><span class="text-gray-500 text-sm" data-i18n="location">Localização</span>: <span id="bovineLocation" class="font-medium"></span></div>
+                <div><span class="text-gray-500 text-sm" data-i18n="owner">Proprietário</span>: <span id="bovineOwner" class="font-medium"></span></div>
+                <div><span class="text-gray-500 text-sm" data-i18n="country">País</span>: <span id="bovineCountry" class="font-medium"></span></div>
+                <div><span class="text-gray-500 text-sm" data-i18n="nationalId">ID Nacional</span>: <span id="bovineNationalId" class="font-medium"></span></div>
+                <div><span class="text-gray-500 text-sm" data-i18n="earTag">Brinco</span>: <span id="bovineEarTag" class="font-medium"></span></div>
+            </div>
+        </section>
+
+        <!-- Lifecycle Events -->
+        <section id="lifecycleEvents" class="hidden bg-white rounded-xl shadow-md p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4" data-i18n="lifecycleTitle">Histórico de Vida</h2>
+            <div class="space-y-4">
+                <div id="vaccinesSection">
+                    <h3 class="font-medium text-green-700 mb-2" data-i18n="vaccines">Vacinas</h3>
+                    <div id="vaccinesList" class="space-y-1"></div>
+                </div>
+                <div id="movementsSection">
+                    <h3 class="font-medium text-blue-700 mb-2" data-i18n="movements">Movimentações</h3>
+                    <div id="movementsList" class="space-y-1"></div>
+                </div>
+                <div id="feedsSection">
+                    <h3 class="font-medium text-yellow-700 mb-2" data-i18n="feeds">Alimentação</h3>
+                    <div id="feedsList" class="space-y-1"></div>
+                </div>
+                <div id="healthExamsSection">
+                    <h3 class="font-medium text-red-700 mb-2" data-i18n="healthExams">Exames de Saúde</h3>
+                    <div id="healthExamsList" class="space-y-1"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- QR Code Section -->
+        <section id="qrSection" class="hidden bg-white rounded-xl shadow-md p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4" data-i18n="qrTitle">Código QR para Consumidor</h2>
+            <div class="flex flex-col items-center gap-4">
+                <div id="qrCode" class="w-48 h-48 bg-gray-100 rounded-lg flex items-center justify-center">
+                    <span class="text-gray-400">QR Code</span>
+                </div>
+                <p class="text-sm text-gray-500" data-i18n="qrDescription">Escaneie para ver o histórico completo deste animal</p>
+            </div>
+        </section>
+
+        <!-- Fractionalization Section -->
+        <section id="fracSection" class="hidden bg-white rounded-xl shadow-md p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4" data-i18n="fracTitle">Fração de Propriedade</h2>
+            <div class="grid grid-cols-3 gap-4 mb-4">
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-green-600" id="totalShares">-</div>
+                    <div class="text-sm text-gray-500" data-i18n="totalShares">Total de Cotas</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-blue-600" id="sharePrice">-</div>
+                    <div class="text-sm text-gray-500" data-i18n="sharePrice">Preço por Cota</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-purple-600" id="yourShares">0</div>
+                    <div class="text-sm text-gray-500" data-i18n="yourShares">Suas Cotas</div>
+                </div>
+            </div>
+            <div class="flex gap-3">
+                <input id="buySharesInput" type="number" placeholder="0" class="flex-1 border border-gray-300 rounded-lg px-4 py-2">
+                <button id="buySharesBtn" class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-medium transition" data-i18n="buyShares">Comprar Cotas</button>
+                <button id="redeemSharesBtn" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg font-medium transition" data-i18n="redeemShares">Resgatar</button>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-white py-6 mt-12">
+        <div class="container mx-auto px-4 text-center">
+            <p class="text-sm opacity-80" data-i18n="footer">ranch_ledger — Rastreabilidade bovina na blockchain | MIT License</p>
+        </div>
+    </footer>
+
+    <script src="i18n.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

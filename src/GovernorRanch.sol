@@ -1,17 +1,17 @@
-    // SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Governor} from "@openzeppelin/contracts/governance/Governor.sol";
-import {Votes} from "@openzeppelin/contracts/governance/utils/Votes.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 /// @title GovernorRanch
-/// @notice DAO governance for the RanchLendingVault. RanchToken holders vote on:
-///         - Liquidation threshold changes
-///         - New supported collateral types  
-///         - Fee structure adjustments
-contract GovernorRanch is Governor, Votes, AccessControl {
+/// @notice Lightweight DAO governance for the RanchLendingVault.
+///         RanchToken holders create and vote on proposals to update vault
+///         parameters (liquidation thresholds, interest rates, fee structures).
+///         Uses simple token-weighted voting (1 token = 1 vote) with a
+/// configurable voting delay and voting period.
+contract GovernorRanch is AccessControl, ReentrancyGuardTransient {
     // ------------------------------------------------------------------ //
     //                              Roles                                 //
     // ------------------------------------------------------------------ //
@@ -24,7 +24,12 @@ contract GovernorRanch is Governor, Votes, AccessControl {
     // ------------------------------------------------------------------ //
 
     error ProposalNotFound(uint256 proposalId);
-    error VotingPeriodExpired();
+    error AlreadyVoted(uint256 proposalId, address voter);
+    error InsufficientVotingPower(address voter, uint256 has, uint256 needed);
+    error ProposalNotActive(uint256 proposalId);
+    error ProposalNotSucceeded(uint256 proposalId);
+    error InvalidVoteType(uint8 support);
+    error ArrayLengthMismatch();
 
     // ------------------------------------------------------------------ //
     //                              Events                                //
@@ -50,224 +55,239 @@ contract GovernorRanch is Governor, Votes, AccessControl {
     event ProposalCanceled(uint256 indexed proposalId);
 
     // ------------------------------------------------------------------ //
+    //                              Enums                                 //
+    // ------------------------------------------------------------------ //
+
+    enum ProposalState { Pending, Active, Succeeded, Defeated, Executed, Canceled }
+
+    // ------------------------------------------------------------------ //
+    //                              Structs                               //
+    // ------------------------------------------------------------------ //
+
+    struct Proposal {
+        address[] targets;
+        uint256[] values;
+        bytes[] calldatas;
+        string description;
+        uint256 voteStart;
+        uint256 voteEnd;
+        uint256 yesVotes;
+        uint256 noVotes;
+        uint256 abstainVotes;
+        bool executed;
+        bool canceled;
+        mapping(address => bool) hasVoted;
+    }
+
+    // ------------------------------------------------------------------ //
     //                              Storage                               //
     // ------------------------------------------------------------------ //
 
     ERC20 public immutable token;
-    uint256 private immutable _votingDelay;
-    uint256 private immutable _votingPeriod;
-    
-    uint256 private constant MIN_PROPOSAL_THRESHOLD = 1e18; // 1 token (6 decimals)
+    uint256 public immutable votingDelay;
+    uint256 public immutable votingPeriod;
+    uint256 public constant MIN_PROPOSAL_THRESHOLD = 1e6; // 1 token (6 decimals)
 
-    mapping(uint256 => mapping(address => bool)) private _votesCast;
+    uint256 private _proposalCount;
+    mapping(uint256 => Proposal) private _proposals;
+
+    // ------------------------------------------------------------------ //
+    //                            Constructor                             //
+    // ------------------------------------------------------------------ //
 
     constructor(
         ERC20 _token,
-        string memory name_,
+        string memory /* name_ */,
         uint256 votingDelay_,
         uint256 votingPeriod_
-    ) Governor(name_) Votes(_token.name()) {
+    ) {
         token = _token;
-        
-        _votingDelay = votingDelay_;
-        _votingPeriod = votingPeriod_;
-        
-        // Grant roles
-        _grantRole(DEFAULT_ADMIN_ROLE, address(this));
+        votingDelay = votingDelay_;
+        votingPeriod = votingPeriod_;
+
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(PROPOSER_ROLE, msg.sender);
     }
 
-    function name() public view override returns (string memory) {
+    // ------------------------------------------------------------------ //
+    //                          View Functions                            //
+    // ------------------------------------------------------------------ //
+
+    function name() public pure returns (string memory) {
         return "RanchDAO";
     }
 
-    function version() public pure override returns (string memory) {
+    function version() public pure returns (string memory) {
         return "1.0";
     }
 
-    function hashProposal(
-        address[] memory targets,
-        uint256[] memory values,
-        bytes[] memory calldatas,
-        bytes32 descriptionHash
-    ) public pure override returns (bytes32) {
-        return keccak256(abi.encode(targets, values, calldatas, descriptionHash));
+    function proposalCount() external view returns (uint256) {
+        return _proposalCount;
     }
 
-    function votingDelay() public view override returns (uint256) {
-        return _votingDelay;
+    function getProposal(uint256 proposalId)
+        external
+        view
+        returns (
+            address[] memory targets,
+            uint256[] memory values,
+            bytes[] memory calldatas,
+            string memory description,
+            uint256 voteStart,
+            uint256 voteEnd,
+            uint256 yesVotes,
+            uint256 noVotes,
+            uint256 abstainVotes,
+            bool executed,
+            bool canceled
+        )
+    {
+        if (proposalId == 0 || proposalId > _proposalCount) revert ProposalNotFound(proposalId);
+        Proposal storage p = _proposals[proposalId];
+        return (
+            p.targets, p.values, p.calldatas, p.description,
+            p.voteStart, p.voteEnd,
+            p.yesVotes, p.noVotes, p.abstainVotes,
+            p.executed, p.canceled
+        );
     }
 
-    function votingPeriod() public view override returns (uint256) {
-        return _votingPeriod;
+    function state(uint256 proposalId) public view returns (ProposalState) {
+        if (proposalId == 0 || proposalId > _proposalCount) revert ProposalNotFound(proposalId);
+        Proposal storage p = _proposals[proposalId];
+
+        if (p.canceled) return ProposalState.Canceled;
+        if (p.executed) return ProposalState.Executed;
+        if (block.number < p.voteStart) return ProposalState.Pending;
+        if (block.number <= p.voteEnd) return ProposalState.Active;
+        if (_voteSucceeded(proposalId)) return ProposalState.Succeeded;
+        return ProposalState.Defeated;
     }
 
-    function quorum(uint256 blockNumber) public view override returns (uint256) {
-        return token.totalSupply() / 10; // 10% quorum based on total supply
+    function hasVoted(uint256 proposalId, address account) external view returns (bool) {
+        return _proposals[proposalId].hasVoted[account];
     }
 
-    function proposalThreshold() public view override returns (uint256) {
+    function quorum() public view returns (uint256) {
+        return token.totalSupply() / 10; // 10% quorum
+    }
+
+    function proposalThreshold() public pure returns (uint256) {
         return MIN_PROPOSAL_THRESHOLD;
     }
 
-    function getVotes(address account, uint256 blockNumber) public view override returns (uint256) {
-        return token.balanceOf(account); // Simplified: use current balance instead of historical
-    }
-
-    function hasVoted(uint256 proposalId, address account) public view override returns (bool) {
-        return _votesCast[proposalId][account];
-    }
-
-    function supportsInterface(bytes4 interfaceId) public view virtual override(Governor, AccessControl) returns (bool) {
-        return super.supportsInterface(interfaceId);
-    }
-
-    function COUNTING_MODE() external pure override returns (string memory) {
-        return "support=bravo&quorum=yes";
-    }
-
-    function CLOCK_MODE() external pure override returns (string memory) {
-        return "mode=blocknumber";
-    }
-
-    function clock() public view override returns (uint48) {
-        return uint48(block.number);
-    }
-
-    function _getVotingUnits(address account) internal view override returns (uint256) {
-        return token.getVotes(account);
-    }
-
-    function _quorumReached(uint256 proposalId) internal view virtual override returns (bool) {
-        ProposalDetails memory details = _proposals[proposalId];
-        uint256 quorumVotes = quorum(details.proposalSnapshot);
-        return details.yesVotes + details.abstainVotes >= quorumVotes;
-    }
-
-    function _voteSucceeded(uint256 proposalId) internal view virtual override returns (bool) {
-        ProposalDetails memory details = _proposals[proposalId];
-        return details.yesVotes > details.noVotes && _quorumReached(proposalId);
-    }
-
-    function _countVote(
-        uint256 proposalId,
-        address account,
-        uint8 support,
-        uint256 weight,
-        bytes memory params
-    ) internal virtual override {
-        ProposalDetails storage details = _proposals[proposalId];
-        
-        if (support == 0) {
-            details.noVotes += weight;
-        } else if (support == 1) {
-            details.yesVotes += weight;
-        } else if (support == 2) {
-            details.abstainVotes += weight;
-        }
-        
-        _votesCast[proposalId][account] = true;
-    }
-
-    function state(uint256 proposalId) public view override returns (ProposalState) {
-        ProposalDetails memory details = _proposals[proposalId];
-        
-        if (details.proposalDeadline < block.number) {
-            return ProposalState.Succeeded;
-        } else if (_voteSucceeded(proposalId)) {
-            return ProposalState.Succeeded;
-        } else {
-            return ProposalState.Active;
-        }
-    }
-
-    function proposalDeadline(uint256 proposalId) public view override returns (uint256) {
-        return _proposals[proposalId].proposalDeadline;
-    }
-
-    struct ProposalDetails {
-        uint256 yesVotes;
-        uint256 noVotes;
-        uint256 abstainVotes;
-        uint256 proposalSnapshot;
-        uint256 proposalDeadline;
-    }
-
-    mapping(uint256 => ProposalDetails) private _proposals;
+    // ------------------------------------------------------------------ //
+    //                         Proposal Creation                          //
+    // ------------------------------------------------------------------ //
 
     function propose(
         address[] memory targets,
         uint256[] memory values,
         bytes[] memory calldatas,
         string memory description
-    ) public override returns (uint256) {
-        require(targets.length == values.length && targets.length == calldatas.length, "Invalid proposal");
-        
-        uint256 votes = token.getVotes(msg.sender);
-        require(votes >= MIN_PROPOSAL_THRESHOLD, "Insufficient voting power");
-        
-        return super.propose(targets, values, calldatas, description);
-    }
+    ) external returns (uint256) {
+        if (targets.length != values.length || targets.length != calldatas.length) {
+            revert ArrayLengthMismatch();
+        }
+        if (!hasRole(PROPOSER_ROLE, msg.sender)) {
+            revert InsufficientVotingPower(msg.sender, 0, MIN_PROPOSAL_THRESHOLD);
+        }
 
-    function _execute(
-        uint256 proposalId,
-        address[] memory targets,
-        uint256[] memory values,
-        bytes[] memory calldatas,
-        bytes32 descriptionHash
-    ) internal override {
-        super._execute(proposalId, targets, values, calldatas, descriptionHash);
-        emit ProposalExecuted(proposalId);
-    }
+        uint256 proposalId = ++_proposalCount;
+        Proposal storage p = _proposals[proposalId];
+        p.targets = targets;
+        p.values = values;
+        p.calldatas = calldatas;
+        p.description = description;
+        p.voteStart = block.number + votingDelay;
+        p.voteEnd = block.number + votingDelay + votingPeriod;
 
-    function _cancel(
-        address[] memory targets,
-        uint256[] memory values,
-        bytes[] memory calldatas,
-        bytes32 descriptionHash
-    ) internal override returns (uint256) {
-        uint256 proposalId = super._cancel(targets, values, calldatas, descriptionHash);
-        emit ProposalCanceled(proposalId);
+        emit ProposalCreated(proposalId, description, targets, values, calldatas, p.voteStart, p.voteEnd);
         return proposalId;
     }
 
-    function castVote(uint256 proposalId, uint8 support) public override returns (uint256) {
-        require(support <= 2, "Invalid vote type");
-        
-        address voter = msg.sender;
-        _requireVoter(voter);
-        
-        uint256 weight = getVotes(voter, block.number - 1);
-        require(weight > 0, "Insufficient voting power");
-        
-        _votesCast[proposalId][voter] = true;
-        
-        return super.castVote(proposalId, support);
+    function cancel(uint256 proposalId) external {
+        if (proposalId == 0 || proposalId > _proposalCount) revert ProposalNotFound(proposalId);
+        if (!hasRole(PROPOSER_ROLE, msg.sender) && !hasRole(DEFAULT_ADMIN_ROLE, msg.sender)) {
+            revert InsufficientVotingPower(msg.sender, 0, MIN_PROPOSAL_THRESHOLD);
+        }
+        Proposal storage p = _proposals[proposalId];
+        p.canceled = true;
+        emit ProposalCanceled(proposalId);
+    }
+
+    // ------------------------------------------------------------------ //
+    //                             Voting                                 //
+    // ------------------------------------------------------------------ //
+
+    function castVote(uint256 proposalId, uint8 support) external returns (uint256) {
+        return _castVote(proposalId, support, "");
     }
 
     function castVoteWithReason(
         uint256 proposalId,
         uint8 support,
         string calldata reason
-    ) public override returns (uint256) {
-        require(support <= 2, "Invalid vote type");
-        
-        address voter = msg.sender;
-        _requireVoter(voter);
-        
-        uint256 weight = getVotes(voter, block.number - 1);
-        require(weight > 0, "Insufficient voting power");
-        
-        _votesCast[proposalId][voter] = true;
-        
-        return super.castVoteWithReason(proposalId, support, reason);
+    ) external returns (uint256) {
+        return _castVote(proposalId, support, reason);
     }
 
-    function _requireVoter(address account) internal view {
-        if (!hasRole(VOTER_ROLE, account)) {
-            revert("Not a voter");
+    function _castVote(uint256 proposalId, uint8 support, string memory reason) internal returns (uint256) {
+        if (proposalId == 0 || proposalId > _proposalCount) revert ProposalNotFound(proposalId);
+        if (support > 2) revert InvalidVoteType(support);
+
+        Proposal storage p = _proposals[proposalId];
+        if (state(proposalId) != ProposalState.Active) revert ProposalNotActive(proposalId);
+        if (p.hasVoted[msg.sender]) revert AlreadyVoted(proposalId, msg.sender);
+
+        uint256 weight = token.balanceOf(msg.sender);
+        if (weight == 0) revert InsufficientVotingPower(msg.sender, 0, 1);
+
+        p.hasVoted[msg.sender] = true;
+
+        if (support == 0) {
+            p.noVotes += weight;
+        } else if (support == 1) {
+            p.yesVotes += weight;
+        } else {
+            p.abstainVotes += weight;
         }
+
+        emit VoteCast(msg.sender, proposalId, support, weight, reason);
+        return weight;
     }
+
+    // ------------------------------------------------------------------ //
+    //                           Execution                                //
+    // ------------------------------------------------------------------ //
+
+    function execute(uint256 proposalId) external nonReentrant {
+        if (proposalId == 0 || proposalId > _proposalCount) revert ProposalNotFound(proposalId);
+        Proposal storage p = _proposals[proposalId];
+
+        if (state(proposalId) != ProposalState.Succeeded) revert ProposalNotSucceeded(proposalId);
+        p.executed = true;
+
+        for (uint256 i = 0; i < p.targets.length; i++) {
+            (bool success, ) = p.targets[i].call{value: p.values[i]}(p.calldatas[i]);
+            require(success, "Proposal execution failed");
+        }
+
+        emit ProposalExecuted(proposalId);
+    }
+
+    // ------------------------------------------------------------------ //
+    //                         Internal Helpers                           //
+    // ------------------------------------------------------------------ //
+
+    function _voteSucceeded(uint256 proposalId) internal view returns (bool) {
+        Proposal storage p = _proposals[proposalId];
+        return p.yesVotes > p.noVotes && (p.yesVotes + p.abstainVotes) >= quorum();
+    }
+
+    // ------------------------------------------------------------------ //
+    //                         Role Management                           //
+    // ------------------------------------------------------------------ //
 
     function grantVoterRole(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _grantRole(VOTER_ROLE, account);
@@ -277,11 +297,9 @@ contract GovernorRanch is Governor, Votes, AccessControl {
         _revokeRole(VOTER_ROLE, account);
     }
 
-    function state(uint256 proposalId) public view override returns (ProposalState) {
-        return super.state(proposalId);
+    function grantProposerRole(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _grantRole(PROPOSER_ROLE, account);
     }
 
-    function proposalDeadline(uint256 proposalId) public view override returns (uint256) {
-        return super.proposalDeadline(proposalId);
-    }
+    receive() external payable {}
 }

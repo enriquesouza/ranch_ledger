@@ -10,6 +10,33 @@ This document provides a reference implementation for migrating BovineTracking t
 - Required for UUPS proxy pattern compatibility
 - Makes storage layout auditable and predictable
 
+## Current Status
+
+**⚠️ Attempted and Reverted — Using Simple Storage**
+
+The EIP-7201 namespaced storage migration was attempted but reverted to simple storage variables. The namespace constants (`BOVINES_SLOT`, `ID_BY_NAME_SLOT`, etc.) remain in `BovineTracking.sol` as unused constants for future reference, but the actual storage uses simple `mapping` and `uint256` declarations.
+
+**Why it was reverted:**
+
+The `assembly { $.slot := NAMESPACE_SLOT }` pattern works for mappings, structs, and arrays, but **fails for value types** (uint256, address, bool). When we tried to move `totalBovines` (uint256) and `nftReceiver` (address) to namespaced slots, the Solidity compiler rejected the assembly slot assignment for value types.
+
+Specifically:
+```solidity
+// ✅ Works for mappings:
+function _getBovinesMapping() internal pure returns (mapping(uint256 => Bovine) storage $) {
+    assembly { $.slot := BOVINES_SLOT }
+}
+
+// ❌ Fails for value types:
+function _getTotalBovines() internal pure returns (uint256 storage $) {
+    assembly { $.slot := TOTAL_BOVINES_SLOT }  // Error: uint256 is not a storage reference type
+}
+```
+
+The `StorageSlot` library from OpenZeppelin provides `getUint256Slot()` and `getAddressSlot()`, but these require a different access pattern that would make the code less readable and more error-prone for simple value types.
+
+**Decision:** Keep simple storage variables for v1. The namespace constants remain as documentation of the intended slot locations for a future migration. When EIP-7201 tooling matures (or when we need upgradeability via UUPS), we can revisit this.
+
 ## Implementation Strategy
 
 ### Step 1: Add StorageSlot Library Dependency
@@ -21,6 +48,8 @@ ls lib/openzeppelin-contracts/contracts/utils/StorageSlot.sol
 ```
 
 ### Step 2: Compute Namespaced Slots
+
+> **Note:** Steps 2–4 were attempted during implementation. The value-type limitation described in the "Current Status" section above was discovered during Step 3/4 when trying to apply the pattern to `totalBovines` (uint256) and `nftReceiver` (address). The migration was reverted as a result.
 
 Use `keccak256(abi.encodePacked("ranch_ledger.storage.", <namespace>))` to generate deterministic slots.
 
@@ -114,6 +143,18 @@ forge script script/DeployNamespaced.s.sol --rpc-url http://127.0.0.1:8545 --bro
 
 Create `docs/StorageLayout.md` documenting each slot's purpose and namespace.
 
+## Lessons Learned
+
+1. **EIP-7201 works well for complex types (mappings, structs, arrays) but not for value types (uint256, address, bool).** The `assembly { $.slot := ... }` pattern requires a storage reference type, which value types are not.
+
+2. **The `StorageSlot` library is a workaround but adds complexity.** Using `StorageSlot.getUint256Slot(slot).value` for every access to `totalBovines` would make the code harder to read and maintain.
+
+3. **Namespace constants are still useful as documentation.** Even though they're not used in assembly, they document the intended storage layout for future migration.
+
+4. **Consider EIP-7201 for new contracts from the start.** For new contracts (like RanchLendingVault, FractionalizationManager), we could design with EIP-7201 from the beginning, using only complex types in namespaced storage and keeping value types in simple storage.
+
+5. **OpenZeppelin v5.1.0's StorageSlot library provides:** `getBooleanSlot()`, `getBytes32Slot()`, `getUint256Slot()`, `getInt256Slot()`, `getAddressSlot()`, `getStringSlot()`, `getBytesSlot()`. These can be used for value types but require a different access pattern.
+
 ## Migration Path
 
 ### Option A: In-Place Refactor (Recommended for New Deployments)
@@ -165,7 +206,7 @@ EIP-7201 adds one SLOAD per storage access (to compute the slot). Expected impac
 
 ---
 
-**Status:** Implementation guide created  
+**Status:** Attempted and reverted — using simple storage (see Current Status)  
 **Priority:** P2 (Medium)  
 **Effort:** M (1-5 days)  
 **Dependencies:** R-09 (UUPS upgradeability decision)

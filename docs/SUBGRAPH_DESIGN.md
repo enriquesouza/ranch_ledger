@@ -2,7 +2,7 @@
 
 ## Overview
 
-This subgraph indexes all events from BovineTracking and BovineNFT contracts, providing efficient off-chain queries via GraphQL. At scale (1M cattle × 50 events each = 50M events), direct `eth_call` is not viable — subgraphs pre-compute the index.
+This subgraph indexes events from the full ranch_ledger contract suite — BovineTracking, BovineNFT, EUDRCompliance, GPSValidator, RanchLendingVault, FractionalizationManager, and GovernorRanch — providing efficient off-chain queries via GraphQL. At scale (1M cattle × 50 events each = 50M events), direct `eth_call` is not viable — subgraphs pre-compute the index.
 
 ## Architecture
 
@@ -22,6 +22,8 @@ This subgraph indexes all events from BovineTracking and BovineNFT contracts, pr
 │  │              GraphQL Endpoint                           ││
 │  │  • /subgraphs/name/ranch-ledger                        ││
 │  │  • Query: getBovine(id), getBovinesByBreed(breed)      ││
+│  │  • Query: getFractionalizations, getCollaterals        ││
+│  │  • Query: getProposals, getGPSMovements, getEUDR       ││
 │  └─────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────┘
                             ↓
@@ -36,6 +38,21 @@ This subgraph indexes all events from BovineTracking and BovineNFT contracts, pr
 │  │  • HealthExamAdded → Add to Bovine.healthExams array   ││
 │  │  • AbattoirProcessAdded → Add to Bovine.abattoirs      ││
 │  │  • Transfer (NFT) → Update NFT.owner                   ││
+│  │  • EudrAttestations → Create EUDRMetadata + GeoPolygon ││
+│  │  • MovementGPS → Create GPSMovement entity             ││
+│  │  • CollateralDeposited → Create Collateral entity      ││
+│  │  • CollateralWithdrawn → Mark Collateral inactive      ││
+│  │  • LoanRepaid → Update Loan, mark inactive             ││
+│  │  • Liquidated → Update Collateral + Loan state         ││
+│  │  • InterestAccrued → Update global interest index       ││
+│  │  • Fractionalized → Create Fractionalization entity    ││
+│  │  • SharesPurchased → Create SharePurchase entity       ││
+│  │  • SharesRedeemed → Update Fractionalization           ││
+│  │  • SaleComplete → Mark Fractionalization.isSold = true  ││
+│  │  • ProposalCreated → Create Proposal entity            ││
+│  │  • VoteCast → Update Proposal vote counts               ││
+│  │  • ProposalExecuted → Update Proposal.state            ││
+│  │  • ProposalCanceled → Update Proposal.state            ││
 │  └─────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────┘
                             ↓
@@ -58,6 +75,31 @@ This subgraph indexes all events from BovineTracking and BovineNFT contracts, pr
 ### BovineNFT Events
 7. `Transfer(from, to, tokenId)` — Standard ERC-721 transfer
 8. `BovineNFTMinted(tokenId, bovineId, to)` — Custom mint event
+
+### EUDRCompliance Events
+9. `EudrAttestations(bovineId, sisbovId, certHash, farmPolygon)` — EUDR metadata anchored
+
+### GPSValidator Events
+10. `MovementGPS(bovineId, fromCoords, toCoords, date)` — GPS-validated movement
+
+### RanchLendingVault Events
+11. `CollateralDeposited(borrower, tokenId, notionalValue, healthScore)` — NFT deposited as collateral
+12. `CollateralWithdrawn(borrower, tokenId, borrowedAmount)` — collateral withdrawn
+13. `LoanRepaid(borrower, tokenId, principal, interest)` — loan repaid
+14. `Liquidated(borrower, liquidator, tokenId, borrowedAmount, healthScore)` — position liquidated
+15. `InterestAccrued(globalIndex, borrowRate)` — interest accrued globally
+
+### FractionalizationManager Events
+16. `Fractionalized(tokenId, owner, totalShares, initialPrice)` — NFT fractionalized
+17. `SharesPurchased(buyer, tokenId, sharesBought, pricePaid)` — shares bought
+18. `SharesRedeemed(investor, tokenId, sharesRedeemed, proceedsReceived)` — shares redeemed
+19. `SaleComplete(tokenId, salePrice, totalProceeds)` — cow marked as sold
+
+### GovernorRanch Events
+20. `ProposalCreated(proposalId, description, targets, values, calldatas, voteStart, voteEnd)`
+21. `VoteCast(voter, proposalId, support, weight, reason)`
+22. `ProposalExecuted(proposalId)`
+23. `ProposalCanceled(proposalId)`
 
 ## GraphQL Schema
 
@@ -145,7 +187,131 @@ type TokenHolder @entity {
   firstMintedAt: BigInt!     # When holder first received tokens
   lastTransferAt: BigInt!    # Last transfer timestamp
 }
+
+type EUDRMetadata @entity {
+  id: ID!
+  bovine: Bovine!
+  sisbovId: String
+  cnpj: String
+  birthTimestamp: BigInt!
+  deforestationCertHash: Bytes!
+  farmPolygon: GeoPolygon!
+  createdAt: BigInt!
+}
+
+type GeoPolygon @entity {
+  id: ID!
+  latE7: [BigInt!]!
+  longE7: [BigInt!]!
+}
+
+type Collateral @entity {
+  id: ID!
+  borrower: Bytes!
+  tokenId: BigInt!
+  countryCode: String
+  nationalId: String
+  notionalValue: BigInt!
+  healthScore: Int!
+  isCollateralized: Boolean!
+  createdAt: BigInt!
+}
+
+type Loan @entity {
+  id: ID!
+  borrower: Bytes!
+  tokenId: BigInt!
+  principal: BigInt!
+  interestAccrued: BigInt!
+  isActive: Boolean!
+  createdAt: BigInt!
+}
+
+type Fractionalization @entity {
+  id: ID!
+  tokenId: BigInt!
+  owner: Bytes!
+  totalShares: BigInt!
+  initialPrice: BigInt!
+  isFractionalized: Boolean!
+  salePrice: BigInt
+  isSold: Boolean!
+  shareTokenAddress: Bytes!
+  createdAt: BigInt!
+}
+
+type SharePurchase @entity {
+  id: ID!
+  buyer: Bytes!
+  tokenId: BigInt!
+  sharesBought: BigInt!
+  pricePaid: BigInt!
+  createdAt: BigInt!
+}
+
+type Proposal @entity {
+  id: ID!
+  proposalId: BigInt!
+  description: String!
+  proposer: Bytes!
+  voteStart: BigInt!
+  voteEnd: BigInt!
+  yesVotes: BigInt!
+  noVotes: BigInt!
+  abstainVotes: BigInt!
+  state: String!
+  createdAt: BigInt!
+}
+
+type GPSMovement @entity {
+  id: ID!
+  bovineId: BigInt!
+  fromLatE7: BigInt!
+  fromLongE7: BigInt!
+  toLatE7: BigInt!
+  toLongE7: BigInt!
+  timestamp: BigInt!
+}
 ```
+
+## Event Handlers
+
+### BovineTracking Handlers
+- **handleBovineAdded:** Create new `Bovine` entity, initialize empty derived arrays
+- **handleVaccineAdded:** Load `Bovine`, create `Vaccine` entity (derivedFrom links automatically)
+- **handleMovementAdded:** Update `Bovine.location`, create `Movement` entity
+- **handleFeedAdded:** Load `Bovine`, create `Feed` entity
+- **handleHealthExamAdded:** Load `Bovine`, create `HealthExam` entity
+- **handleAbattoirProcessAdded:** Load `Bovine`, create `AbattoirProcess` entity
+
+### BovineNFT Handlers
+- **handleTransfer:** Update `NFT.owner`, set `transferredAt` timestamp
+- **handleBovineNFTMinted:** Create `NFT` entity linked to `Bovine`
+
+### EUDRCompliance Handlers
+- **handleEudrAttestations:** Create `GeoPolygon` entity from `farmPolygon` lat/long arrays, create `EUDRMetadata` entity linked to `Bovine`
+
+### GPSValidator Handlers
+- **handleMovementGPS:** Create `GPSMovement` entity with E7-encoded coordinates
+
+### RanchLendingVault Handlers
+- **handleCollateralDeposited:** Create `Collateral` entity with `isCollateralized = true`
+- **handleCollateralWithdrawn:** Load `Collateral`, set `isCollateralized = false`
+- **handleLoanRepaid:** Load `Loan`, set `isActive = false`, update `interestAccrued`
+- **handleLiquidated:** Load `Collateral` and `Loan`, mark both inactive, record liquidator
+- **handleInterestAccrued:** Update global interest index entity (singleton)
+
+### FractionalizationManager Handlers
+- **handleFractionalized:** Create `Fractionalization` entity with `isFractionalized = true`, `isSold = false`
+- **handleSharesPurchased:** Create `SharePurchase` entity, update `Fractionalization.totalShares` remaining
+- **handleSharesRedeemed:** Update `Fractionalization`, record redemption proceeds
+- **handleSaleComplete:** Load `Fractionalization`, set `isSold = true`, record `salePrice`
+
+### GovernorRanch Handlers
+- **handleProposalCreated:** Create `Proposal` entity with `state = "Pending"`, zero vote counts
+- **handleVoteCast:** Load `Proposal`, increment `yesVotes`/`noVotes`/`abstainVotes` based on `support` field
+- **handleProposalExecuted:** Load `Proposal`, set `state = "Executed"`
+- **handleProposalCanceled:** Load `Proposal`, set `state = "Canceled"`
 
 ## Query Examples
 
@@ -285,6 +451,130 @@ query GetStatistics {
 }
 ```
 
+### Get All Fractionalized Cows
+
+```graphql
+query GetFractionalizedCows {
+  fractionalizations(
+    where: { isFractionalized: true }
+    first: 100
+    orderBy: createdAt
+    orderDirection: desc
+  ) {
+    id
+    tokenId
+    owner
+    totalShares
+    initialPrice
+    isSold
+    salePrice
+    createdAt
+  }
+}
+```
+
+### Get All Collateral Deposits by Country
+
+```graphql
+query GetCollateralsByCountry($countryCode: String!) {
+  collaterals(
+    where: { countryCode: $countryCode, isCollateralized: true }
+    first: 100
+    orderBy: createdAt
+    orderDirection: desc
+  ) {
+    id
+    borrower
+    tokenId
+    notionalValue
+    healthScore
+    nationalId
+    createdAt
+  }
+}
+
+# Variables: { "countryCode": "BR" }
+```
+
+### Get All Proposals and Their Vote Counts
+
+```graphql
+query GetProposals {
+  proposals(
+    first: 100
+    orderBy: createdAt
+    orderDirection: desc
+  ) {
+    id
+    proposalId
+    description
+    proposer
+    voteStart
+    voteEnd
+    yesVotes
+    noVotes
+    abstainVotes
+    state
+    createdAt
+  }
+}
+```
+
+### Get All GPS Movements for a Specific Bovine
+
+```graphql
+query GetGPSMovements($bovineId: BigInt!) {
+  gpsMovements(
+    where: { bovineId: $bovineId }
+    first: 100
+    orderBy: timestamp
+    orderDirection: desc
+  ) {
+    id
+    bovineId
+    fromLatE7
+    fromLongE7
+    toLatE7
+    toLongE7
+    timestamp
+  }
+}
+
+# Variables: { "bovineId": "42" }
+```
+
+### Get All EUDR Metadata for a Farm Polygon
+
+```graphql
+query GetEUDRByPolygon($polygonId: ID!) {
+  geoPolygon(id: $polygonId) {
+    id
+    latE7
+    longE7
+  }
+  eudrMetadatas(
+    where: { farmPolygon: $polygonId }
+    first: 100
+    orderBy: createdAt
+    orderDirection: desc
+  ) {
+    id
+    bovine {
+      id
+      name
+      breed
+    }
+    sisbovId
+    cnpj
+    birthTimestamp
+    deforestationCertHash
+    createdAt
+  }
+}
+
+# Variables: { "polygonId": "0xabc123..." }
+```
+
 ## AssemblyScript Mapping Functions
 
 See `src/mapping.ts` for the complete event handler implementations.
@@ -294,6 +584,17 @@ Key patterns:
 - **VaccineAdded/FeedAdded/etc.:** Load existing Bovine, push to array, save
 - **MovementAdded:** Update Bovine.location + add movement record
 - **Transfer (NFT):** Update NFT.owner, set transferredAt timestamp
+- **EudrAttestations:** Create GeoPolygon from lat/long E7 arrays, link EUDRMetadata to Bovine
+- **MovementGPS:** Create GPSMovement with E7-encoded coordinates (no conversion needed)
+- **CollateralDeposited:** Create Collateral with healthScore and notionalValue from event
+- **LoanRepaid/Liquidated:** Update both Collateral and Loan entities atomically
+- **InterestAccrued:** Update singleton global index entity (id: "global")
+- **Fractionalized:** Create Fractionalization with shareTokenAddress from event
+- **SharesPurchased/SharesRedeemed:** Update Fractionalization aggregate fields + create SharePurchase
+- **SaleComplete:** Set isSold = true, record salePrice on Fractionalization
+- **ProposalCreated:** Create Proposal with state = "Pending", zero vote counts
+- **VoteCast:** Increment yesVotes/noVotes/abstainVotes based on support (0=against, 1=for, 2=abstain)
+- **ProposalExecuted/Canceled:** Update Proposal.state string field
 
 ## Local Development Setup
 

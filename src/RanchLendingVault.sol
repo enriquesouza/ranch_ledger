@@ -225,7 +225,7 @@ contract RanchLendingVault is AccessControl, ReentrancyGuardTransient {
         if (!loan.isActive) {
             loan.principal = 0;
             loan.interestAccrued = 0;
-            loan.lastUpdateBlock = block.number;
+            loan.lastUpdateBlock = block.timestamp; // Store timestamp, not block number
             loan.isActive = true;
         }
         
@@ -290,12 +290,20 @@ contract RanchLendingVault is AccessControl, ReentrancyGuardTransient {
         // Update state
         c.isCollateralized = false;
         totalCollateralValue -= collateralValue;
-        
+
+        // Forgive the debt — totalBorrows decreases by the principal portion
+        // (interest accrued is written off, not subtracted from totalBorrows
+        // which only tracks principal)
+        if (currentBorrow > totalBorrows) {
+            totalBorrows = 0;
+        } else {
+            totalBorrows -= currentBorrow;
+        }
+
         loan.principal = 0;
         loan.interestAccrued = 0;
         loan.isActive = false;
-        totalBorrows -= currentBorrow;
-        
+
         emit Liquidated(borrower, msg.sender, tokenId, currentBorrow, c.healthScore);
     }
 
@@ -348,9 +356,16 @@ contract RanchLendingVault is AccessControl, ReentrancyGuardTransient {
     function _getCurrentBorrowAmount(address borrower, uint256 tokenId) internal view returns (uint256) {
         Loan storage loan = _loans[borrower][tokenId];
         if (!loan.isActive || loan.principal == 0) return 0;
-        
-        // Calculate interest based on time elapsed since last update
-        uint256 timeElapsed = block.timestamp - (loan.lastUpdateBlock * 12); // Approximate block time
+
+        // Calculate interest based on time elapsed since last update.
+        // Use block.timestamp directly (stored in lastUpdateBlock as a timestamp
+        // via _updateGlobalIndex) to avoid underflow when block.timestamp is small.
+        uint256 lastUpdate = loan.lastUpdateBlock;
+        if (block.timestamp <= lastUpdate) {
+            // No time has passed — return principal only
+            return loan.principal;
+        }
+        uint256 timeElapsed = block.timestamp - lastUpdate;
         uint256 borrowRate = calculateBorrowRate();
         uint256 interest = (loan.principal * borrowRate * timeElapsed) / (BASIS_POINTS_DIVISOR * SECONDS_PER_YEAR);
         

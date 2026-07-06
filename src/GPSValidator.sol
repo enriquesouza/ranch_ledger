@@ -59,7 +59,7 @@ contract GPSValidator {
     function validateMovement(
         GPSCoordinate memory fromCoords,
         GPSCoordinate memory toCoords
-    ) external view returns (bool valid) {
+    ) public view returns (bool valid) {
         // Validate both coordinates
         if (!validateCoordinate(fromCoords)) return false;
         if (!validateCoordinate(toCoords)) return false;
@@ -84,7 +84,7 @@ contract GPSValidator {
     function calculateDistance(
         GPSCoordinate memory fromCoords,
         GPSCoordinate memory toCoords
-    ) external pure returns (uint256 distanceMeters) {
+    ) public pure returns (uint256 distanceMeters) {
         // Convert to radians and calculate differences
         int256 dLat = ((toCoords.latE7 - fromCoords.latE7) * 1e7) / 100;
         int256 dLong = ((toCoords.longE7 - fromCoords.longE7) * 1e7) / 100;

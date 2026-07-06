@@ -1,17 +1,26 @@
 # RanchLendingVault — Architecture & Design Document
 
-**Status:** Design Phase  
+**Status:** Implemented  
 **Priority:** P2 (Medium)  
 **Effort:** XL (1+ month)  
-**Dependencies:** R-09 (UUPS decision), R-11 (EUDR compliance)
+**Dependencies:** R-09 (no-upgradeability decision, see ADR-001), R-11 (EUDR compliance)
 
 ---
 
 ## Overview
 
-The RanchLendingVault is a decentralized lending protocol that uses BovineNFTs as collateral for rural credit. It enables Brazilian ranchers to access affordable loans backed by proven cattle assets, addressing the critical gap in rural financing in Brazil's $2 trillion agribusiness sector.
+The RanchLendingVault is a decentralized lending protocol that uses BovineNFTs as collateral for rural credit. It enables ranchers worldwide to access affordable loans backed by proven cattle assets, addressing the critical gap in rural financing in the global agribusiness sector.
 
 **Key Innovation:** Risk scoring based on on-chain bovine health data (vaccines, feed, movements) rather than traditional credit scores.
+
+**Global Livestock ID Support:** The vault's `Collateral` struct includes `countryCode` and `nationalId` fields, enabling cross-jurisdiction collateral. A Brazilian rancher can deposit a cow with its SISBOV ID, while a US rancher can deposit with a USDA ANID — both in the same vault. Supported registries include:
+
+- 🇧🇷 **Brazil** — SISBOV
+- 🇪🇺 **EU** — ISO 1166 / animal passport
+- 🇺🇸 **US** — USDA ANID
+- 🇦🇺 **Australia** — NLIS
+- 🇨🇳 **China** — MARA
+- 🇸🇦🇦🇪🇶🇦 **GCC** — Saudi Arabia, UAE, Qatar national IDs
 
 ## Problem Statement
 
@@ -35,6 +44,7 @@ Brazilian ranchers face:
 │  │  • Deposit/Withdraw BovineNFTs                          ││
 │  │  • Calculate LTV (Loan-to-Value)                        ││
 │  │  • Monitor NFT transfers & health status                ││
+│  │  • Global livestock ID (countryCode + nationalId)       ││
 │  └─────────────────────────────────────────────────────────┘│
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │              Risk Scoring Engine                        ││
@@ -49,6 +59,16 @@ Brazilian ranchers face:
 │  │  • Parameterized by cattle health data                  ││
 │  │  • Automated liquidation on default                     ││
 │  └─────────────────────────────────────────────────────────┘│
+│                                                             │
+│  Non-upgradeable (per ADR-001) — AccessControl +            │
+│  ReentrancyGuardTransient                                   │
+└─────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────┐
+│  BovineNFT (ERC-721)  ←  BovineTracking (provenance)         │
+│  • tokenId → bovineId                                       │
+│  • countryCode / nationalId stored on NFT                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -63,54 +83,45 @@ Brazilian ranchers face:
 
 ### RanchLendingVault.sol
 
+> **Note:** Per [ADR-001-no-upgradeability.md](./ADR-001-no-upgradeability.md), the vault uses **non-upgradeable** contracts with `AccessControl` and `ReentrancyGuardTransient` (transient storage reentrancy guard, cheaper than storage-based). No proxy pattern is used.
+
 ```solidity
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
-contract RanchLendingVault is 
-    UUPSUpgradeable, 
-    AccessControlUpgradeable, 
-    ReentrancyGuardUpgradeable 
-{
+contract RanchLendingVault is AccessControl, ReentrancyGuardTransient {
     bytes32 public constant LIQUIDATOR_ROLE = keccak256("LIQUIDATOR_ROLE");
-    bytes32 public constant RISK_MANAGER_ROLE = keccak256("RISK_MANAGER_ROLE");
-
-    struct Loan {
-        address borrower;
-        uint256[] collateralNftIds;  // Array of BovineNFT token IDs
-        uint256 principal;           // Borrowed amount
-        uint256 interestAccrued;     // Accrued interest
-        uint256 lastInterestUpdate;  // Last interest calculation timestamp
-        bool isActive;               // Loan status
-    }
+    bytes32 public constant PRICER_ROLE = keccak256("PRICER_ROLE");
 
     struct Collateral {
-        uint256 nftId;
         address owner;
-        uint256 healthScore;       // 0-100, calculated from on-chain data
-        uint256 value;             // Notional value in stablecoins (e.g., USDC)
-        bool isLocked;             // Locked during loan period
+        uint256 tokenId;
+        string countryCode;    // ISO 3166-1 alpha-2: BR, EU, US, AU, CN, SA, AE, QA
+        string nationalId;     // Country-specific ID (SISBOV, ANID, NLIS, GCC, etc.)
+        uint256 notionalValue;
+        uint256 healthScore;
+        bool isCollateralized;
     }
 
-    mapping(uint256 => Loan) public loans;
-    mapping(address => Collateral[]) public userCollateral;
-    
-    uint256 public totalLiquidity;     // Total deposited liquidity
-    uint256 public totalBorrowed;      // Total outstanding loans
-    uint256 public baseInterestRate;   // Base APR (e.g., 10%)
-    uint256 public liquidationThreshold; // LTV threshold for liquidation (e.g., 70%)
-    
-    address public nftContract;        // BovineNFT contract address
-    
-    event LoanTaken(uint256 indexed loanId, address indexed borrower, uint256 amount);
-    event LoanRepaid(uint256 indexed loanId, address indexed borrower);
-    event CollateralDeposited(address indexed user, uint256 nftId);
-    event CollateralWithdrawn(address indexed user, uint256 nftId);
-    event Liquidated(uint256 indexed loanId, address indexed liquidator);
+    struct Loan {
+        uint256 principal;
+        uint256 interestAccrued;
+        uint256 lastUpdateBlock;
+        bool isActive;
+    }
+
+    struct VaultConfig {
+        uint256 maxLTV;
+        uint256 liquidationThreshold;
+        uint256 healthScoreFloor;
+        uint256 baseBorrowRate;
+        uint256 utilizationSlope1;
+        uint256 utilizationSlope2;
+        uint256 optimalUtilization;
+    }
 }
 ```
 
@@ -157,52 +168,139 @@ function calculateLTV(uint256 healthScore) public pure returns (uint256 ltv) {
 }
 ```
 
-### Interest Rate Model
+## Global Livestock ID Integration
+
+The `Collateral` struct now includes `countryCode` and `nationalId` fields, enabling **cross-jurisdiction collateral** within a single vault. This means:
+
+- A **Brazilian rancher** can deposit a cow with its SISBOV ID (`countryCode = "BR"`, `nationalId = "BR-SISBOV-123456"`)
+- A **US rancher** can deposit with a USDA ANID (`countryCode = "US"`, `nationalId = "USDA-ANID-840-..."`)
+- An **Australian rancher** can deposit with an NLIS tag (`countryCode = "AU"`, `nationalId = "NLIS-..."`)
+
+All three deposits coexist in the same vault, with health scores derived from each jurisdiction's BovineTracking provenance data. The `countryCode` follows ISO 3166-1 alpha-2 format, while `nationalId` is a free-form string that accommodates each country's identification scheme:
+
+| Country | Code | Registry | ID Format Example |
+|---------|------|----------|------------------|
+| Brazil | BR | SISBOV | `BR-SISBOV-123456` |
+| EU | EU | ISO 1166 | `EU-PASS-DE-...` |
+| US | US | USDA ANID | `USDA-ANID-840-...` |
+| Australia | AU | NLIS | `NLIS-123456789` |
+| China | CN | MARA | `MARA-CN-...` |
+| Saudi Arabia | SA | GCC | `GCC-SA-...` |
+| UAE | AE | GCC | `GCC-AE-...` |
+| Qatar | QA | GCC | `GCC-QA-...` |
+
+This design enables a globally diversified collateral pool, reducing geographic concentration risk and allowing lenders to access cattle-backed yield across multiple regulatory frameworks.
+
+## Health Score Derivation
+
+Health scores (0–100) are derived from BovineTracking provenance data. The score is a composite of multiple on-chain signals:
+
+| Signal | Weight | Source | Max Points |
+|--------|--------|--------|------------|
+| **Vaccine history completeness** | +2/vaccine | `Bovine.vaccines[]` | +20 |
+| **Feed quality & origin verification** | +3/organic feed | `Bovine.feeds[]` | +9 |
+| **Movement pattern analysis** | +1/movement | `Bovine.movements[]` | +10 |
+| **Health exam results** | +5/"Healthy" | `Bovine.healthExams[]` | +15 |
+| **Base score** | — | — | 50 |
+
+**Risk-adjusted LTV mapping:**
+
+$$\text{LTV} = 40 + \frac{\text{healthScore} \times 30}{100}$$
+
+- **Higher scores → lower risk → higher LTV** (e.g., score 90 → LTV 67%)
+- **Lower scores → higher risk → lower LTV** (e.g., score 30 → LTV 49%)
+- Scores below `healthScoreFloor` (configurable, default 30) trigger liquidation
+
+## Interest Rate Model
+
+The vault uses a **Compound-style** interest rate model with a kink at `optimalUtilization`:
+
+```
+        rate
+         │
+         │              ╱  utilizationSlope2 (steep)
+         │            ╱
+         │          ╱
+  base──┤────────╱  ← kink (optimalUtilization)
+  +slope1╲      ╱
+         │    ╱  utilizationSlope1 (gentle)
+         │  ╱
+         ╱
+         └──────────────────────────────── utilization
+          0%       optimalUtilization      100%
+```
+
+- **Global index** tracks accrued interest across all loans
+- **`baseBorrowRate`** — floor rate applied at 0% utilization
+- **`utilizationSlope1`** — gentle slope below the kink (low utilization regime)
+- **`utilizationSlope2`** — steep slope above the kink (high utilization regime, incentivizes repayment)
+- **`optimalUtilization`** — the kink point (e.g., 80%)
 
 ```solidity
-function calculateInterestRate(uint256 utilizationRatio) public view returns (uint256 rate) {
-    // Compound-style model:
-    // - Below 80% utilization: base rate + small slope
-    // - Above 80% utilization: steep increase to incentivize repayment
-    
-    uint256 optimalUtilization = 80;
-    
-    if (utilizationRatio <= optimalUtilization) {
-        rate = baseInterestRate + (utilizationRatio * 10) / optimalUtilization;
+function calculateInterestRate(uint256 utilization) public view returns (uint256 rate) {
+    VaultConfig memory cfg = config;
+    if (utilization <= cfg.optimalUtilization) {
+        rate = cfg.baseBorrowRate
+            + (utilization * cfg.utilizationSlope1) / cfg.optimalUtilization;
     } else {
-        uint256 excessUtilization = utilizationRatio - optimalUtilization;
-        rate = baseInterestRate + 10 + (excessUtilization * 50) / (100 - optimalUtilization);
+        uint256 excess = utilization - cfg.optimalUtilization;
+        rate = cfg.baseBorrowRate + cfg.utilizationSlope1
+            + (excess * cfg.utilizationSlope2) / (100 - cfg.optimalUtilization);
     }
-}
-
-function accrueInterest(uint256 loanId) public {
-    Loan storage loan = loans[loanId];
-    uint256 timeElapsed = block.timestamp - loan.lastInterestUpdate;
-    
-    // Calculate utilization ratio
-    uint256 utilization = totalBorrowed == 0 ? 0 : (loan.principal * 1e18) / totalLiquidity;
-    
-    uint256 rate = calculateInterestRate(utilization);
-    loan.interestAccrued += (loan.principal * rate * timeElapsed) / (365 days * 1e18);
-    loan.lastInterestUpdate = block.timestamp;
-}
-
-function isUnderwater(uint256 loanId) public view returns (bool) {
-    Loan storage loan = loans[loanId];
-    
-    // Calculate total collateral value
-    uint256 totalCollateralValue = 0;
-    for (uint256 i = 0; i < loan.collateralNftIds.length; i++) {
-        Collateral memory coll = userCollateral[loan.borrower][i];
-        if (coll.isLocked && coll.nftId == loan.collateralNftIds[i]) {
-            totalCollateralValue += coll.value;
-        }
-    }
-    
-    uint256 debt = loan.principal + loan.interestAccrued;
-    return (debt * 100) / totalCollateralValue > liquidationThreshold;
 }
 ```
+
+## Liquidation Flow
+
+Liquidation is triggered by `LIQUIDATOR_ROLE` holders when any of the following conditions are met:
+
+1. **Health score drops below `healthScoreFloor`** — cattle health deteriorates (disease, missing vaccines)
+2. **LTV exceeds `liquidationThreshold`** — debt grows beyond safe collateral coverage
+3. **NFT transferred out of vault without repayment** — collateral theft attempt
+
+**Liquidation process:**
+
+```
+┌──────────────┐    LIQUIDATOR_ROLE    ┌──────────────────┐
+│  Liquidator  │ ───────────────────► │  RanchLendingVault │
+└──────────────┘    liquidate(tokenId) └────────┬─────────┘
+                                               │
+                    ┌──────────────────────────┘
+                    ▼
+        ┌───────────────────────┐
+        │  Verify trigger:      │
+        │  • health < floor OR  │
+        │  • LTV > threshold    │
+        └───────────┬───────────┘
+                    │ pass
+                    ▼
+        ┌───────────────────────┐
+        │  Transfer BovineNFT    │
+        │  to liquidator         │
+        └───────────┬───────────┘
+                    │
+                    ▼
+        ┌───────────────────────┐
+        │  Forgive remaining     │
+        │  debt (loan.isActive   │
+        │  = false)              │
+        └───────────────────────┘
+```
+
+- The NFT is transferred to the liquidator as compensation
+- Remaining debt is **forgiven** (no further obligation on the borrower)
+- The loan is marked `isActive = false`
+
+## Key Functions
+
+| Function | Access | Description |
+|----------|--------|-------------|
+| `depositCollateral(uint256 tokenId)` | External | Deposit a BovineNFT as collateral; locks NFT in vault |
+| `withdrawCollateral(uint256 tokenId)` | External | Withdraw NFT after loan is fully repaid |
+| `borrow(uint256 tokenId, uint256 amount)` | External | Borrow RanchToken against deposited collateral |
+| `repayLoan(uint256 tokenId)` | External | Repay outstanding loan and release collateral |
+| `updateConfig(VaultConfig)` | `DEFAULT_ADMIN_ROLE` | Update vault parameters (LTV, thresholds, rates) |
+| `setPricer(address)` | `DEFAULT_ADMIN_ROLE` | Set the address authorized to update notional values (`PRICER_ROLE`) |
 
 ## Integration with BovineTracking
 
@@ -477,18 +575,15 @@ Track these metrics post-launch:
 
 ## Future Enhancements
 
-1. **Insurance Integration:** Partner with parametric insurance providers for disease outbreaks
-2. **Carbon Credits:** Allow ranchers to use carbon credit NFTs as additional collateral
-3. **Cross-Chain Lending:** Support lending across multiple L2s (Base, Arbitrum)
-4. **AI Risk Scoring:** Integrate ML models for more accurate health predictions
-5. **DAO Governance:** Let RanchToken holders vote on interest rates and LTV parameters
+1. **FractionalizationManager Integration:** Allow `FractionalizationVault` share tokens (BovineShareToken ERC-20) to be used as collateral, enabling fractional ownership of high-value cattle to participate in lending
+2. **GovernorRanch DAO Governance:** Move parameter updates (`updateConfig`, `setPricer`) from admin-only to DAO-governed proposals via `GovernorRanch`, letting RanchToken holders vote on interest rates and LTV thresholds
+3. **Chainlink Price Oracle:** Replace admin-set notional values with Chainlink price feeds for real-time, tamper-resistant cattle market valuations
+4. **Multi-Currency Support:** Beyond RanchToken, support borrowing in multiple stablecoins (USDC, DAI, USDT) with cross-rate conversion
+5. **Insurance Integration:** Partner with parametric insurance providers for disease outbreaks
+6. **Carbon Credits:** Allow ranchers to use carbon credit NFTs as additional collateral
+7. **Cross-Chain Lending:** Support lending across multiple L2s (Base, Arbitrum, Optimism)
+8. **AI Risk Scoring:** Integrate ML models for more accurate health predictions
 
 ---
 
-**Next Steps:**
-1. Implement core contract structure (RanchLendingVault.sol)
-2. Add risk scoring engine with BovineTracking integration
-3. Write comprehensive test suite
-4. Deploy to Polygon Amoy testnet for beta testing
-
-**Estimated Timeline:** 6-8 weeks from design approval to mainnet pilot launch
+**Implementation Status:** ✅ Core contract implemented in `src/RanchLendingVault.sol`. See [ARCHITECTURE.md](./ARCHITECTURE.md) for deployment details.

@@ -69,9 +69,9 @@ contract BovineTrackingTest is Test {
     function test_AddMovements() public {
         test_AddBovine();
         BovineTracking.Movement[] memory m = new BovineTracking.Movement[](3);
-        m[0] = BovineTracking.Movement("Farm A", "Farm B", 1632893482);
-        m[1] = BovineTracking.Movement("Farm B", "Farm C", 1632893490);
-        m[2] = BovineTracking.Movement("Farm C", "Farm D", 1632893498);
+        m[0] = BovineTracking.Movement("Farm A", "Farm B", 1632893482, 0, 0);
+        m[1] = BovineTracking.Movement("Farm B", "Farm C", 1632893490, 0, 0);
+        m[2] = BovineTracking.Movement("Farm C", "Farm D", 1632893498, 0, 0);
 
         vm.startPrank(rancher);
         for (uint256 i = 0; i < m.length; i++) {

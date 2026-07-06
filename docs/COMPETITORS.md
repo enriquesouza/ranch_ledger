@@ -255,6 +255,10 @@ Specific niche characteristics:
 
 5. **Polygon / Base deployment (L2) for cost.** On Ethereum L1, writing 50 fields per animal would cost ~$5–$50 in gas. On Polygon PoS or Base, the same transaction costs <$0.01. The business case closes at L2.
 
+6. **Global livestock ID support.** Only EVM tool with on-chain validators for SISBOV (Brazil), EU ISO 11784/11785, USDA ANID/EID (USA), NLIS (Australia), MARA (China), and GSO 2057 (GCC). No competitor supports more than one national system.
+
+7. **NFT fractionalization.** Only cattle tracking tool that enables fractional ownership of individual cows via ERC-20 share tokens. Investors can buy partial ownership of a cow, enabling RWA (Real World Asset) tokenization.
+
 ### 4.3 The moat
 
 The moat is not the code (easily forked) but:
@@ -268,22 +272,26 @@ The moat is not the code (easily forked) but:
 
 ## 5. Feature gap matrix
 
-| Feature | IBM Food Trust | VeChain | TE-FOOD | BeefLedger | MOOvement | OpenSC | ranch_ledger (current) | ranch_ledger (roadmap) |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Per-animal ERC-721 NFT | ❌ | ❌ VIP-181 | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Public EVM / auditable | ❌ | Partial | ❌ | Partial | ❌ | ✅ | ✅ (testnet) | ✅ (L2) |
-| DeFi composable (collateral) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ (roadmap) |
-| Open-source + Foundry | ❌ | Partial | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Vaccination records on-chain | ✅ | ✅ | ✅ | Partial | ❌ | ❌ | ✅ | ✅ |
-| GPS movement on-chain | Partial | ✅ | ✅ | ❌ | ✅ IoT | Partial | ❌ | ✅ (oracle) |
-| EUDR compliance ready | ❌ (defunct) | ❌ | Partial | ❌ | ❌ | ❌ | ❌ | ✅ (roadmap) |
-| SISBOV integration | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ (roadmap) |
-| Consumer QR scan | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ (roadmap) |
-| Role-based access (RBAC) | ✅ | ✅ | ✅ | Partial | ❌ | ❌ | ✅ | ✅ |
-| ERC-20 incentive token | ❌ | ❌ VTHO | ✅ TONE | ✅ WQB | ❌ | ❌ | ✅ RanchToken | ✅ |
-| Free to deploy | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ (anvil) | ✅ (L2) |
-| <$0.10 per record cost | ❌ | ✅ VTHO | ✅ | ❌ | N/A | ❌ | ✅ (testnet) | ✅ (Polygon/Base) |
-| Brazilian Portuguese UX | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ (roadmap) |
+| Feature | ranch_ledger | IBM Food Trust | VeChain | TE-FOOD | BeefLedger | MOOvement | Elysia |
+|---|---|---|---|---|---|---|---|
+| Global livestock ID validators (7 systems) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| NFT fractionalization (ERC-20 shares per cow) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| NFT-backed lending vault | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| DAO governance | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Per-animal ERC-721 NFT | ✅ | ❌ | ❌ VIP-181 | ❌ | ❌ | ❌ | ❌ |
+| Public EVM / auditable | ✅ (testnet) | ❌ | Partial | ❌ | Partial | ❌ | ✅ |
+| DeFi composable (collateral) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Open-source + Foundry | ✅ | ❌ | Partial | ❌ | ❌ | ❌ | ❌ |
+| Vaccination records on-chain | ✅ | ✅ | ✅ | ✅ | Partial | ❌ | ❌ |
+| GPS movement on-chain | ❌ | Partial | ✅ | ✅ | ❌ | ✅ IoT | Partial |
+| EUDR compliance ready | ❌ | ❌ (defunct) | ❌ | Partial | ❌ | ❌ | ❌ |
+| SISBOV integration | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Consumer QR scan | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Role-based access (RBAC) | ✅ | ✅ | ✅ | ✅ | Partial | ❌ | ❌ |
+| ERC-20 incentive token | ✅ RanchToken | ❌ | ❌ VTHO | ✅ TONE | ✅ WQB | ❌ | ❌ |
+| Free to deploy | ✅ (anvil) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| <$0.10 per record cost | ✅ (testnet) | ❌ | ✅ VTHO | ✅ | ❌ | N/A | ❌ |
+| Brazilian Portuguese UX | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 ---
 
@@ -310,6 +318,10 @@ The moat is not the code (easily forked) but:
 7. **RanchToken as a rural credit instrument.** The RanchToken (ERC-20) should not just be a reward token — it should be a governance token for a lending vault where cattle NFTs (with verified SISBOV + GPS + vaccination history) can be deposited as collateral for USD-denominated stablecoin loans. The target APR for Brazilian rural credit is 8–15% formal / 20–40% informal. Even 6% on-chain is a transformative offer. Model after MakerDAO's RWA vaults.
 
 8. **Integrate EU Digital Product Passport.** The EU Digital Product Passport (DPP) regulation (2026–2027 rollout) is explicitly EVM-friendly — the European Commission's DPP working group has referenced ERC-721 and ERC-1155 in their technical recommendations. Position ranch_ledger as the reference implementation for DPP in the Brazilian beef sector.
+
+9. **Global ID validation is a defensible moat.** No competitor validates national livestock IDs on-chain. This is a regulatory compliance feature that becomes more valuable as EUDR enforcement tightens. The validators cover 7 systems across 9+ countries, representing >60% of global beef production.
+
+10. **NFT fractionalization enables a new asset class.** Cattle as RWA (Real World Asset) is a $1.5T global market. Fractionalization allows retail investors to own partial cattle, creating a new investment vehicle. This is complementary to the lending vault — both use BovineNFT as the base asset.
 
 ---
 

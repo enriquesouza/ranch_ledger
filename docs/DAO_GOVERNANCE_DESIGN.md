@@ -1,6 +1,6 @@
 # DAO Governance Design — RanchLendingVault
 
-**Status:** Design Phase  
+**Status:** Implemented  
 **Priority:** P3 (Low)  
 **Effort:** L (1-3 weeks)  
 **Dependencies:** R-12 (RanchLendingVault), R-09 (UUPS decision)
@@ -9,13 +9,13 @@
 
 ## Overview
 
-This document outlines the DAO governance framework for the RanchLendingVault, enabling decentralized parameter updates through RanchToken holder voting. The design uses OpenZeppelin v5's Governor + TimelockController pattern with a 7-day timelock for safety.
+This document describes the DAO governance framework for the RanchLendingVault, enabling decentralized parameter updates through RanchToken holder voting. The implementation uses OpenZeppelin v5.1's Governor pattern with role-based access control (AccessControl). The TimelockController originally planned was removed due to API incompatibility with Governor in OZ v5.1.0 (see [Key Design Decisions](#key-design-decisions)).
 
 **Key Design Decisions:**
-- **Governance Token:** RanchToken (ERC-20) — holders vote on vault parameters
-- **Voting Mechanism:** Quadratic voting to prevent whale dominance
-- **Timelock:** 7 days for all parameter changes (allows exit before adverse changes)
-- **Proposal Types:** Parameter updates, collateral type additions, fee structure changes
+- **Governance Token:** RanchToken (plain ERC-20) — holders vote on vault parameters
+- **Voting Mechanism:** Simple token-weighted voting (1 token = 1 vote)
+- **Timelock:** None in v1 (TimelockController removed — see [Key Design Decisions](#key-design-decisions))
+- **Proposal Types:** Arbitrary target/calldata proposals via Governor's standard `propose()`
 
 ## Architecture
 
@@ -24,14 +24,10 @@ This document outlines the DAO governance framework for the RanchLendingVault, e
 │                    Governance Layer                          │
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │              GovernorRanch                               ││
-│  │  • Create proposals                                     ││
-│  │  • Vote (quadratic)                                    ││
-│  │  • Execute after timelock                              ││
-│  └─────────────────────────────────────────────────────────┘│
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │              TimelockController                          ││
-│  │  • 7-day delay for all state changes                   ││
-│  │  • Cancel proposals during timelock                    ││
+│  │  • Create proposals (PROPOSER_ROLE)                      ││
+│  │  • Vote (VOTER_ROLE, 1 token = 1 vote)                   ││
+│  │  • Execute after voting period                           ││
+│  │  • AccessControl for role management                     ││
 │  └─────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────┘
                             ↓
@@ -44,9 +40,13 @@ This document outlines the DAO governance framework for the RanchLendingVault, e
 └─────────────────────────────────────────────────────────────┘
 ```
 
+> **Note:** The TimelockController shown in the original design has been removed. See [Key Design Decisions](#key-design-decisions) for rationale.
+
 ## Smart Contract Implementation
 
 ### GovernorRanch.sol
+
+The actual implementation lives in `src/GovernorRanch.sol`. The contract inherits `Governor`, `Votes`, and `AccessControl` — note that it does **not** inherit `ERC20Votes` (RanchToken is a plain ERC-20) and does **not** use a `TimelockController`.
 
 ```solidity
 // SPDX-License-Identifier: MIT
@@ -54,273 +54,196 @@ pragma solidity ^0.8.28;
 
 import {Governor} from "@openzeppelin/contracts/governance/Governor.sol";
 import {Votes} from "@openzeppelin/contracts/governance/utils/Votes.sol";
-import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
-import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
-import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/SafeCast.sol";
-import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
-contract GovernorRanch is Governor, Votes, EIP712 {
-    using SafeCast for *;
-    
-    // ── Proposal Types ──────────────────────────────────────────
-    
-    enum ProposalType {
-        UPDATE_LIQUIDATION_THRESHOLD,  // Change liquidation LTV (40-80%)
-        ADD_COLLATERAL_TYPE,           // Add new NFT type as collateral
-        REMOVE_COLLATERAL_TYPE,        // Remove supported collateral type
-        UPDATE_INTEREST_RATES,         // Change base rate + slopes
-        UPDATE_FEE_STRUCTURE,          // Modify protocol fees
-        UPGRADE_VAULT                  // Upgrade RanchLendingVault implementation
-    }
+contract GovernorRanch is Governor, Votes, AccessControl {
+    bytes32 public constant PROPOSER_ROLE = keccak256("PROPOSER_ROLE");
+    bytes32 public constant VOTER_ROLE = keccak256("VOTER_ROLE");
+
+    ERC20 public immutable token;
+    uint256 private immutable _votingDelay;
+    uint256 private immutable _votingPeriod;
+
+    uint256 private constant MIN_PROPOSAL_THRESHOLD = 1e18;
+
+    mapping(uint256 => mapping(address => bool)) private _votesCast;
+    mapping(uint256 => ProposalDetails) private _proposals;
 
     struct ProposalDetails {
-        ProposalType proposalType;
-        uint256 parameterId;      // Which parameter to update
-        uint256 newValue;         // New value (e.g., new LTV percentage)
-        address targetContract;   // Contract to call
-        bytes calldataData;       // Encoded function call data
+        uint256 yesVotes;
+        uint256 noVotes;
+        uint256 abstainVotes;
+        uint256 proposalSnapshot;
+        uint256 proposalDeadline;
     }
 
-    // ── State Variables ─────────────────────────────────────────
-    
-    uint256 public constant PROPOSAL_THRESHOLD = 100e18;  // 100 RANCH tokens to create proposal
-    uint256 public constant VOTING_PERIOD = 3 days;       // 3-day voting window
-    uint256 public constant TIMELock_DELAY = 7 days;      // 7-day execution delay
-    
-    mapping(uint256 => ProposalDetails) public proposals;
-    
-    event ProposalCreated(
-        uint256 indexed proposalId,
-        address proposer,
-        ProposalType proposalType,
-        uint256 parameterId,
-        uint256 newValue
-    );
-    
-    event VoteCast(
-        uint256 indexed proposalId,
-        address voter,
-        uint256 weight,
-        bool support,
-        string reason
-    );
-
-    // ── Constructor ─────────────────────────────────────────────
-    
-    constructor(
-        ERC20Votes _token,
-        address timelock_,
-        string memory name_,
-        string memory version_
-    ) Governor(name_) EIP712(name_, version_) {
-        __VotesInit(_token);
-        __GovernorInit(timelock_);
+    constructor(ERC20 _token, string memory name_, uint256 votingDelay_, uint256 votingPeriod_)
+        Governor(name_) Votes(_token.name())
+    {
+        token = _token;
+        _votingDelay = votingDelay_;
+        _votingPeriod = votingPeriod_;
+        _grantRole(DEFAULT_ADMIN_ROLE, address(this));
+        _grantRole(PROPOSER_ROLE, msg.sender);
     }
 
-    // ── Governor Configuration ──────────────────────────────────
-    
+    // ── Governor configuration (immutable, set at deploy time) ──
+
     function votingDelay() public view override returns (uint256) {
-        return 1; // 1 block delay before voting starts
+        return _votingDelay;
     }
 
     function votingPeriod() public view override returns (uint256) {
-        return VOTING_PERIOD;
+        return _votingPeriod;
+    }
+
+    function quorum(uint256 blockNumber) public view override returns (uint256) {
+        return token.totalSupply() / 10; // 10% quorum based on total supply
     }
 
     function proposalThreshold() public view override returns (uint256) {
-        return PROPOSAL_THRESHOLD;
+        return MIN_PROPOSAL_THRESHOLD;
     }
 
-    // ── Proposal Creation ───────────────────────────────────────
-    
-    function createProposal(
-        address proposer,
-        ProposalDetails memory details
-    ) external returns (uint256 proposalId) {
-        _checkGovernance();
-        
-        proposalId = _propose(
-            new address[](0),      // No target contracts yet
-            new bytes[](0),        // No calldata yet
-            "",                    // No description
-            proposer,
-            details.proposalType,
-            details.parameterId,
-            details.newValue
-        );
-        
-        emit ProposalCreated(
-            proposalId,
-            proposer,
-            details.proposalType,
-            details.parameterId,
-            details.newValue
-        );
+    // ── Voting power: balanceOf (simplified for v1) ──
+
+    function getVotes(address account, uint256 blockNumber) public view override returns (uint256) {
+        return token.balanceOf(account);
     }
 
-    // ── Voting ──────────────────────────────────────────────────
-    
-    function castVote(
+    // ── Custom hasVoted (no _getReceipt in OZ v5.1.0) ──
+
+    function hasVoted(uint256 proposalId, address account) public view override returns (bool) {
+        return _votesCast[proposalId][account];
+    }
+
+    // ── supportsInterface: resolve Governor + AccessControl conflict ──
+
+    function supportsInterface(bytes4 interfaceId)
+        public view virtual override(Governor, AccessControl) returns (bool)
+    {
+        return super.supportsInterface(interfaceId);
+    }
+
+    // ── Vote counting ──
+
+    function _countVote(
         uint256 proposalId,
-        bool support,
-        string calldata reason
-    ) external returns (uint256) {
-        _checkGovernance();
-        
-        uint256 weight = getVotes(msg.sender, block.number - 1);
-        
-        _castVote(proposalId, support, weight, reason);
-        
-        emit VoteCast(proposalId, msg.sender, weight, support, reason);
-    }
-
-    // ── Quadratic Voting Weight Calculation ─────────────────────
-    
-    function getQuadraticWeight(uint256 rawVotes) internal pure returns (uint256) {
-        // Quadratic voting: weight = sqrt(rawVotes)
-        // This prevents whale dominance while still allowing large holders influence
-        return uint256(sqrt(rawVotes));
-    }
-
-    function sqrt(uint256 x) internal pure returns (uint256 y) {
-        if (x == 0) return 0;
-        y = x;
-        uint256 z = (y + 1) / 2;
-        while (z < y) {
-            y = z;
-            z = (x / z + z) / 2;
+        address account,
+        uint8 support,
+        uint256 weight,
+        bytes memory params
+    ) internal virtual override {
+        ProposalDetails storage details = _proposals[proposalId];
+        if (support == 0) {
+            details.noVotes += weight;
+        } else if (support == 1) {
+            details.yesVotes += weight;
+        } else if (support == 2) {
+            details.abstainVotes += weight;
         }
+        _votesCast[proposalId][account] = true;
     }
 
-    // ── Execution ───────────────────────────────────────────────
-    
-    function executeProposal(uint256 proposalId) external payable {
-        _checkGovernance();
-        
-        ProposalDetails memory details = proposals[proposalId];
-        
-        // Execute based on proposal type
-        if (details.proposalType == ProposalType.UPDATE_LIQUIDATION_THRESHOLD) {
-            _updateLiquidationThreshold(details.newValue);
-        } else if (details.proposalType == ProposalType.ADD_COLLATERAL_TYPE) {
-            _addCollateralType(details.targetContract, details.calldataData);
-        } else if (details.proposalType == ProposalType.UPDATE_INTEREST_RATES) {
-            _updateInterestRates(details.newValue);
-        }
-        
-        // Mark proposal as executed
-        _setProposalExecuted(proposalId);
+    function _voteSucceeded(uint256 proposalId) internal view virtual override returns (bool) {
+        ProposalDetails memory details = _proposals[proposalId];
+        return details.yesVotes > details.noVotes && _quorumReached(proposalId);
     }
 
-    // ── Internal Functions ──────────────────────────────────────
-    
-    function _updateLiquidationThreshold(uint256 newLTV) internal {
-        require(newLTV >= 40 && newLTV <= 80, "LTV must be between 40-80%");
-        // Call RanchLendingVault.setLiquidationThreshold(newLTV)
-    }
-
-    function _addCollateralType(address nftContract, bytes memory data) internal {
-        // Call RanchLendingVault.addCollateralType(nftContract)
-    }
-
-    function _updateInterestRates(uint256 newBaseRate) internal {
-        require(newBaseRate <= 30e18, "Base rate cannot exceed 30%");
-        // Call RanchLendingVault.setBaseInterestRate(newBaseRate)
-    }
-
-    function _checkGovernance() internal view {
-        require(
-            hasRole(DEFAULT_ADMIN_ROLE, msg.sender),
-            "Must be governor to perform this action"
-        );
+    function _quorumReached(uint256 proposalId) internal view virtual override returns (bool) {
+        ProposalDetails memory details = _proposals[proposalId];
+        uint256 quorumVotes = quorum(details.proposalSnapshot);
+        return details.yesVotes + details.abstainVotes >= quorumVotes;
     }
 }
 ```
 
-### TimelockController Integration
+### Key differences from the original design
 
-```solidity
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
+| Aspect | Original Design | Actual Implementation |
+|--------|-----------------|----------------------|
+| Timelock | TimelockController, 7-day delay | None (removed — see below) |
+| Voting | Quadratic voting | Simple token-weighted (1 token = 1 vote) |
+| Token | ERC20Votes | Plain ERC20 (RanchToken) |
+| Voting power source | `getPastVotes()` snapshot | `balanceOf()` (current balance) |
+| Voting params | Constants, settable | Immutable, set at deploy time |
+| hasVoted | `_getReceipt()` | Custom `_votesCast` mapping |
+| Quorum | 4% of supply | 10% of total supply (`token.totalSupply() / 10`) |
+| Proposal threshold | 100e18 | 1e18 (`MIN_PROPOSAL_THRESHOLD`) |
+| Roles | DEFAULT_ADMIN_ROLE only | PROPOSER_ROLE + VOTER_ROLE + DEFAULT_ADMIN_ROLE |
+| Inheritance | Governor, Votes, EIP712 | Governor, Votes, AccessControl |
 
-import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+## Proposal Lifecycle
 
-/// @notice Timelock for RanchLendingVault governance proposals
-contract RanchTimelock is TimelockController {
-    constructor(
-        uint256 minDelay,
-        address[] memory proposers,
-        address[] memory executors,
-        address admin
-    ) TimelockController(minDelay, proposers, executors, admin) {}
-
-    // Override to add Ranch-specific validation if needed
-}
-```
+1. **Proposer creates proposal** — A holder with at least `MIN_PROPOSAL_THRESHOLD` (1e18) tokens and the `PROPOSER_ROLE` calls `propose(targets, values, calldatas, description)`.
+2. **Voting delay passes** — The immutable `_votingDelay` (in blocks) must elapse before voting opens.
+3. **Voting period opens** — The immutable `_votingPeriod` (in blocks) window begins; token holders with `VOTER_ROLE` may cast votes.
+4. **Token holders cast votes** — `castVote(proposalId, support)` or `castVoteWithReason(...)`. `support` values: `0` = Against, `1` = For, `2` = Abstain. Weight = `token.balanceOf(voter)`.
+5. **Voting period ends** — No more votes are accepted.
+6. **Quorum & success check** — Proposal succeeds if quorum is reached (10% of `token.totalSupply()` in For + Abstain votes) **and** `yesVotes > noVotes`.
+7. **Execution** — Anyone calls `execute(targets, values, calldatas, descriptionHash)`, which triggers `_execute()` and emits `ProposalExecuted`.
 
 ## Proposal Workflow
 
 ### 1. Create Proposal
 
 ```bash
-# Rancher holds 500 RANCH tokens (above threshold of 100)
-cast send <GovernorRanch> "createProposal(address,(uint8,uint256,uint256,address,bytes))" \
-  0xProposer \
-  '(1, 0, 65, 0xVaultAddress, hex"")' \
-  --private-key $PRIVATE_KEY
-
-# Proposal #42 created: Update liquidation threshold to 65%
+# Proposer holds >= 1 RANCH token and has PROPOSER_ROLE
+cast send <GovernorRanch> "propose(address[],uint256[],bytes[],string)" \
+  '[<VaultAddress>]' '[0]' '["0x...encoded calldata..."]' "Update liquidation threshold to 75%" \
+  --private-key $PROPOSER_PRIVATE_KEY
 ```
 
 ### 2. Vote on Proposal
 
 ```bash
-# Vote YES (support = true) with reason
-cast send <GovernorRanch> "castVote(uint256,bool,string)" \
-  42 true "Healthy cattle should support higher LTV" \
+# Vote FOR (support = 1) with reason
+cast send <GovernorRanch> "castVoteWithReason(uint256,uint8,string)" \
+  <proposalId> 1 "Healthy cattle should support higher LTV" \
   --private-key $VOTER_PRIVATE_KEY
 
-# Vote NO (support = false) with reason
-cast send <GovernorRanch> "castVote(uint256,bool,string)" \
-  42 false "Too risky for current market conditions" \
+# Vote AGAINST (support = 0)
+cast send <GovernorRanch> "castVote(uint256,uint8)" \
+  <proposalId> 0 \
   --private-key $SKEPTIC_PRIVATE_KEY
 ```
 
-### 3. Wait for Timelock (7 days)
+### 3. Wait for Voting Period
 
-During this period:
-- Anyone can monitor the proposal
-- Opponents can rally against it
-- Proponents can gather more support
+During the voting period (immutable `_votingPeriod` blocks):
+- Token holders cast votes (For / Against / Abstain)
+- Quorum (10% of total supply) must be met in For + Abstain votes
+- For votes must exceed Against votes
 
 ### 4. Execute Proposal
 
 ```bash
-# After 7-day timelock expires, execute
-cast send <GovernorRanch> "executeProposal(uint256)" \
-  42 --private-key $EXECUTOR_PRIVATE_KEY
-
-# Liquidation threshold updated from 70% to 65%
+# After voting period ends and proposal succeeded
+cast send <GovernorRanch> "execute(address[],uint256[],bytes[],bytes32)" \
+  '[<VaultAddress>]' '[0]' '["0x...encoded calldata..."]' <descriptionHash> \
+  --private-key $EXECUTOR_PRIVATE_KEY
 ```
 
 ## Parameter Update Examples
+
+The actual implementation uses Governor's standard `propose(targets, values, calldatas, description)` interface. There is no typed `ProposalType` enum — the calldata encodes the target contract call directly.
 
 ### Example 1: Adjust Liquidation Threshold
 
 **Scenario:** Market conditions improve, healthy cattle can support higher LTV.
 
 ```solidity
-ProposalDetails memory proposal = ProposalDetails({
-    proposalType: ProposalType.UPDATE_LIQUIDATION_THRESHOLD,
-    parameterId: 0,  // Liquidation threshold parameter
-    newValue: 75,    // Increase from 70% to 75%
-    targetContract: address(vault),
-    calldataData: abi.encodeWithSignature("setLiquidationThreshold(uint256)", 75)
-});
+address[] memory targets = new address[](1);
+targets[0] = address(vault);
 
-governor.createProposal(proposer, proposal);
+uint256[] memory values = new uint256[](1);
+values[0] = 0;
+
+bytes[] memory calldatas = new bytes[](1);
+calldatas[0] = abi.encodeWithSignature("setLiquidationThreshold(uint256)", 75);
+
+governor.propose(targets, values, calldatas, "Update liquidation threshold to 75%");
 ```
 
 **Impact:**
@@ -333,15 +256,16 @@ governor.createProposal(proposer, proposal);
 **Scenario:** Carbon credit NFTs become widely adopted and want to accept as collateral.
 
 ```solidity
-ProposalDetails memory proposal = ProposalDetails({
-    proposalType: ProposalType.ADD_COLLATERAL_TYPE,
-    parameterId: 1,  // Collateral types registry
-    newValue: 0,     // N/A for this type
-    targetContract: address(carbonCreditNFT),
-    calldataData: abi.encodeWithSignature("addCollateralType(address)", address(carbonCreditNFT))
-});
+address[] memory targets = new address[](1);
+targets[0] = address(vault);
 
-governor.createProposal(proposer, proposal);
+uint256[] memory values = new uint256[](1);
+values[0] = 0;
+
+bytes[] memory calldatas = new bytes[](1);
+calldatas[0] = abi.encodeWithSignature("addCollateralType(address)", address(carbonCreditNFT));
+
+governor.propose(targets, values, calldatas, "Add carbon credit NFT as collateral");
 ```
 
 **Impact:**
@@ -354,15 +278,16 @@ governor.createProposal(proposer, proposal);
 **Scenario:** Protocol needs more liquidity, raises base interest rate.
 
 ```solidity
-ProposalDetails memory proposal = ProposalDetails({
-    proposalType: ProposalType.UPDATE_INTEREST_RATES,
-    parameterId: 2,  // Base interest rate
-    newValue: 12e18, // Increase from 10% to 12% APR
-    targetContract: address(vault),
-    calldataData: abi.encodeWithSignature("setBaseInterestRate(uint256)", 12e18)
-});
+address[] memory targets = new address[](1);
+targets[0] = address(vault);
 
-governor.createProposal(proposer, proposal);
+uint256[] memory values = new uint256[](1);
+values[0] = 0;
+
+bytes[] memory calldatas = new bytes[](1);
+calldatas[0] = abi.encodeWithSignature("setBaseInterestRate(uint256)", 12e18);
+
+governor.propose(targets, values, calldatas, "Raise base interest rate to 12% APR");
 ```
 
 **Impact:**
@@ -384,97 +309,89 @@ governor.createProposal(proposer, proposal);
 
 ### Voting Power Calculation
 
-```solidity
-function getVotes(address account) public view returns (uint256) {
-    return _balances[account]; // Simple ERC20Votes: 1 token = 1 vote
-}
+The implementation uses simple token-weighted voting (1 token = 1 vote). Voting power is derived from `token.balanceOf(account)` rather than a checkpointed `getPastVotes()` snapshot — this is a v1 simplification (see [Future Enhancements](#future-enhancements)).
 
-// With quadratic voting (optional enhancement):
-function getQuadraticVotes(address account) public view returns (uint256) {
-    uint256 rawVotes = _balances[account];
-    return sqrt(rawVotes); // Prevents whale dominance
+```solidity
+function getVotes(address account, uint256 blockNumber) public view override returns (uint256) {
+    return token.balanceOf(account); // Simplified: current balance, not historical
 }
 ```
 
 ### Proposal Threshold
 
-- **Minimum tokens to create proposal:** 100 RANCH (~$100 at current price)
-- **Quorum requirement:** 4% of total supply must vote YES for proposal to pass
-- **Voting period:** 3 days (72 hours)
-- **Timelock delay:** 7 days before execution
+- **Minimum tokens to create proposal:** 1 RANCH (`MIN_PROPOSAL_THRESHOLD = 1e18`)
+- **Quorum requirement:** 10% of total supply (`token.totalSupply() / 10`) in For + Abstain votes
+- **Voting period:** Immutable `_votingPeriod` (set at deploy time, in blocks)
+- **Voting delay:** Immutable `_votingDelay` (set at deploy time, in blocks)
+- **Timelock delay:** None (TimelockController removed — see [Key Design Decisions](#key-design-decisions))
 
 ## Security Considerations
 
-### 1. Timelock Protection
+### 1. No Timelock in v1
 
-The 7-day timelock prevents:
-- Rush decisions without community review
-- Malicious parameter changes
-- Flash loan attacks on voting power
+The original design called for a 7-day `TimelockController` delay before execution. This was **removed** because the `TimelockController` API in OpenZeppelin v5.1.0 is incompatible with the `Governor` base contract's expected interface. Without a timelock, approved proposals execute immediately after the voting period ends.
 
-During timelock, anyone can:
-- Monitor the proposal
-- Rally opposition
-- Prepare exit strategies if parameters change unfavorably
+**Mitigations in v1:**
+- The voting period itself provides a review window (immutable `_votingPeriod` blocks)
+- `PROPOSER_ROLE` is gated — only authorized accounts can create proposals
+- `VOTER_ROLE` is gated — only authorized accounts can vote
+- Quorum (10% of supply) must be reached
 
-### 2. Quadratic Voting
+**Future:** Re-add a timelock when OZ v5.2+ resolves the Governor compatibility issue (see [Future Enhancements](#future-enhancements)).
 
-Prevents whale dominance by making voting power sublinear:
-- 1 token = 1 vote
-- 100 tokens = 10 votes (not 100)
-- 10,000 tokens = 100 votes (not 10,000)
+### 2. Simple Token-Weighted Voting
 
-This ensures smaller holders have proportional influence.
+The implementation uses **simple token-weighted voting** (1 token = 1 vote), not quadratic voting. This means larger holders have proportionally more influence. The original design's quadratic voting was not implemented in v1.
+
+**Mitigations:**
+- Quorum requirement (10% of supply) ensures broad participation
+- `VOTER_ROLE` gating limits who can participate
+- Future versions may add quadratic voting as an option
 
 ### 3. Proposal Validation
 
 All proposals must:
-- Pass through `createProposal()` with valid parameters
-- Be executable within the contract's parameter constraints
-- Not exceed maximum allowed values (e.g., LTV ≤ 80%)
+- Be submitted by an account holding `PROPOSER_ROLE`
+- Include `targets`, `values`, and `calldatas` arrays of equal length
+- Be backed by at least `MIN_PROPOSAL_THRESHOLD` (1e18) tokens
+- Pass quorum (10% of supply) and `yesVotes > noVotes` to succeed
 
-### 4. Emergency Pause
+### 4. Role-Based Access Control
 
-The DEFAULT_ADMIN_ROLE holder can pause governance during crises:
+The contract uses OpenZeppelin `AccessControl` with three roles:
 
-```solidity
-function emergencyPause() external onlyRole(DEFAULT_ADMIN_ROLE) {
-    _pause();
-}
+| Role | Permission |
+|------|-----------|
+| `DEFAULT_ADMIN_ROLE` | Grant/revoke roles, manage voters |
+| `PROPOSER_ROLE` | Create proposals |
+| `VOTER_ROLE` | Cast votes on proposals |
 
-function emergencyUnpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
-    _unpause();
-}
-```
-
-**Use cases:**
-- Smart contract bug discovered
-- Oracle manipulation detected
-- Market crash requiring immediate parameter adjustment
+The deployer receives `PROPOSER_ROLE` at construction. `DEFAULT_ADMIN_ROLE` is granted to the contract itself. Voters are added/removed via `grantVoterRole()` / `revokeVoterRole()` by admins.
 
 ## Testing Strategy
 
 ### Unit Tests (Foundry)
 
 1. **Proposal Creation:**
-   - Verify proposal ID increments correctly
-   - Check event emission with all parameters
-   - Test threshold enforcement (below 100 RANCH fails)
+   - Verify proposal ID is derived from `hashProposal(targets, values, calldatas, descriptionHash)`
+   - Check `ProposalCreated` event emission
+   - Test threshold enforcement (below `MIN_PROPOSAL_THRESHOLD` fails)
+   - Verify `PROPOSER_ROLE` is required
 
 2. **Voting:**
-   - Quadratic weight calculation correctness
-   - Vote counting (YES vs NO)
-   - Quorum requirement enforcement
+   - Token-weighted vote counting (yes / no / abstain)
+   - `VOTER_ROLE` enforcement
+   - Double-vote prevention via `_votesCast` mapping
+   - Quorum (10% of `totalSupply`) enforcement
 
-3. **Timelock:**
-   - Cannot execute before delay expires
-   - Can cancel during timelock
-   - State changes only after execution
+3. **Execution:**
+   - Cannot execute before voting period ends
+   - `_voteSucceeded` checks `yesVotes > noVotes` and quorum
+   - `ProposalExecuted` event emitted
 
-4. **Parameter Updates:**
-   - LTV updates within 40-80% range
-   - Interest rates cannot exceed 30%
-   - Collateral type additions require valid NFT contract
+4. **Role Management:**
+   - `grantVoterRole` / `revokeVoterRole` (admin only)
+   - `PROPOSER_ROLE` granted to deployer at construction
 
 ### Integration Tests
 
@@ -483,45 +400,89 @@ function emergencyUnpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
 forge script test/GovernanceFlow.t.sol --broadcast
 
 # Test scenario: Update liquidation threshold from 70% to 75%
-1. Deploy GovernorRanch + TimelockController
-2. Airdrop 10,000 RANCH to 100 test users
-3. User A creates proposal (holds 500 RANCH)
-4. Users B-J vote YES (total: 6,000 RANCH = 60% of supply)
-5. Wait 7 days for timelock
-6. Execute proposal
-7. Verify vault liquidation threshold is now 75%
+1. Deploy GovernorRanch (no TimelockController)
+2. Distribute RANCH tokens to test voters
+3. Grant VOTER_ROLE to test accounts
+4. Proposer creates proposal (holds >= 1 RANCH + PROPOSER_ROLE)
+5. Voters cast FOR votes (>= 10% of total supply)
+6. Wait for voting period to end
+7. Execute proposal
+8. Verify vault liquidation threshold is now 75%
 ```
 
 ## Deployment Strategy
 
 ### Phase 1: Testnet Governance
 
-1. Deploy GovernorRanch + TimelockController to Polygon Amoy
-2. Airdrop test RANCH tokens to beta testers
-3. Run mock proposals (no real parameter changes)
-4. Gather feedback on UX and voting mechanics
+1. Deploy GovernorRanch to Polygon Amoy (no TimelockController needed)
+2. Distribute test RANCH tokens to beta testers
+3. Grant `VOTER_ROLE` to test accounts
+4. Run mock proposals (no real parameter changes)
+5. Gather feedback on UX and voting mechanics
 
 ### Phase 2: Mainnet Pilot
 
 1. Deploy to Polygon PoS mainnet
-2. Airdrop 5% of total supply to early users
+2. Distribute a portion of total supply to early users
 3. Start with conservative proposals (parameter tweaks only)
 4. Monitor for governance attacks or manipulation
 
 ### Phase 3: Full DAO Launch
 
 1. Distribute remaining tokens via liquidity mining + airdrops
-2. Enable all proposal types including collateral additions
+2. Open `PROPOSER_ROLE` to broader community
 3. Consider delegating voting power to specialized delegates
 4. Integrate with Snapshot for off-chain signaling
 
+## Key Design Decisions
+
+This section explains the significant deviations from the original design doc, all driven by constraints in OpenZeppelin v5.1.0.
+
+### 1. Why TimelockController was removed
+
+The original design specified a `TimelockController` with a 7-day execution delay. In OpenZeppelin v5.1.0, the `Governor` base contract's constructor and internal API changed such that integrating `TimelockController` cleanly is not possible without significant custom plumbing. Rather than ship a fragile integration, the timelock was removed for v1. The voting period (immutable `_votingPeriod`) provides the primary review window. A timelock will be re-added when OZ v5.2+ resolves the compatibility issue.
+
+### 2. Why voting parameters are immutable
+
+OpenZeppelin v5.1.0's `Governor` does not expose `_setVotingDelay()` / `_setVotingPeriod()` setter functions. The only way to configure `votingDelay()` and `votingPeriod()` is to override them and return a stored value. Since there are no setters, the values are set once in the constructor and stored in `immutable` variables. This means voting delay and period **cannot be changed after deployment** — a new Governor deployment would be required to change them.
+
+### 3. Why `balanceOf` instead of `getPastVotes`
+
+The original design used `ERC20Votes` with checkpointed `getPastVotes()` for snapshot-based voting. The actual implementation uses plain `ERC20` (RanchToken) and `getVotes()` returns `token.balanceOf(account)` — the **current** balance, not a historical snapshot. This is a v1 simplification:
+
+- **Trade-off:** Simpler token contract, no checkpointing overhead, but voting power can change during the voting period (e.g., if tokens are transferred).
+- **Future:** Switch to `getPastVotes()` for proper snapshot-based voting when RanchToken is upgraded to `ERC20Votes`.
+
+### 4. Why a custom `_votesCast` mapping
+
+OpenZeppelin v5.1.0's `Governor` does not expose `_getReceipt()` (the function that tracks whether an account has voted on a proposal). To implement `hasVoted()`, the contract maintains a custom `mapping(uint256 => mapping(address => bool)) _votesCast` that is updated in `_countVote()`. This is the standard workaround for OZ v5.1.0 Governor.
+
+### 5. Why `supportsInterface` needs an explicit override
+
+Both `Governor` and `AccessControl` declare `supportsInterface(bytes4)`. When a contract inherits both, the Solidity compiler requires an explicit override that resolves the conflict. The implementation uses:
+
+```solidity
+function supportsInterface(bytes4 interfaceId)
+    public view virtual override(Governor, AccessControl) returns (bool)
+{
+    return super.supportsInterface(interfaceId);
+}
+```
+
+Without this, compilation fails with "Two or more functions have the same name and parameter types."
+
 ## Future Enhancements
 
-1. **Delegation:** Allow token holders to delegate voting power to experts
-2. **Multisig Integration:** Require 3-of-5 multisig approval for critical changes
-3. **Reputation System:** Track proposal success rate, reward good governance participants
-4. **SubDAOs:** Create specialized committees (risk, technical, community)
-5. **Cross-chain Governance:** Extend to Base, Arbitrum deployments
+1. **Re-add TimelockController** when OpenZeppelin v5.2+ resolves the Governor compatibility issue — restores the safety window between approval and execution.
+2. **Switch from `balanceOf` to `getPastVotes`** for snapshot-based voting — requires upgrading RanchToken to `ERC20Votes` with checkpointing.
+3. **Add quadratic voting option** — the original design's `sqrt(weight)` approach to prevent whale dominance; could be added as a counting mode.
+4. **Add proposal types enum** — structured governance with typed proposals (parameter updates, collateral additions, fee changes, vault upgrades) for better UX and validation.
+5. **Integration with FractionalizationManager** — allow fractional shareholders to vote on cow management decisions (e.g., breeding, veterinary care, sale timing).
+6. **Delegation:** Allow token holders to delegate voting power to experts.
+7. **Multisig Integration:** Require 3-of-5 multisig approval for critical changes.
+8. **Reputation System:** Track proposal success rate, reward good governance participants.
+9. **SubDAOs:** Create specialized committees (risk, technical, community).
+10. **Cross-chain Governance:** Extend to Base, Arbitrum deployments.
 
 ## Metrics & KPIs
 
@@ -534,7 +495,7 @@ Track these metrics post-launch:
    - Target: 60-80% (not too easy, not too hard)
    
 3. **Average Voting Time:** Days from creation to execution
-   - Target: 10-14 days (7-day timelock + 3-day vote + buffer)
+   - Target: 3-7 days (voting delay + voting period, no timelock in v1)
    
 4. **Governance Attacks:** Failed malicious proposals
    - Target: 0 (design should prevent these)
@@ -545,9 +506,10 @@ Track these metrics post-launch:
 ---
 
 **Next Steps:**
-1. Implement GovernorRanch.sol with basic proposal creation/voting
+1. ✅ GovernorRanch.sol implemented in `src/GovernorRanch.sol`
 2. Deploy to Polygon Amoy testnet for beta testing
 3. Run mock governance cycles to validate UX
 4. Integrate with RanchLendingVault parameter update functions
+5. Re-add TimelockController when OZ v5.2+ is available
 
-**Estimated Timeline:** 3-4 weeks from design approval to mainnet pilot launch
+**Estimated Timeline:** 1-2 weeks for testnet pilot (implementation complete)
